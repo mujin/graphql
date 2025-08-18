@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/graphql-go/graphql/gqlerrors"
 	"github.com/graphql-go/graphql/language/ast"
@@ -427,10 +428,12 @@ func collectFields(p collectFieldsParams) (fields map[string][]*ast.Field) {
 				continue
 			}
 			name := getFieldEntryKey(selection)
-			if _, ok := fields[name]; !ok {
-				fields[name] = []*ast.Field{}
+			existingFields, ok := fields[name]
+			if !ok {
+				fields[name] = []*ast.Field{selection}
+				continue
 			}
-			fields[name] = append(fields[name], selection)
+			fields[name] = append(existingFields, selection)
 		case *ast.InlineFragment:
 
 			if !shouldIncludeNode(p.ExeContext, selection.Directives) ||
