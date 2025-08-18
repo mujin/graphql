@@ -356,7 +356,7 @@ type IsTypeOfParams struct {
 	Value interface{}
 
 	// Info is a collection of information about the current execution state.
-	Info ResolveInfo
+	Info *ResolveInfo
 
 	// Context argument is a context value that is provided to every resolve function within an execution.
 	// It is commonly
@@ -577,7 +577,7 @@ type ResolveParams struct {
 	Args map[string]interface{}
 
 	// Info is a collection of information about the current execution state.
-	Info ResolveInfo
+	Info *ResolveInfo
 
 	// Context argument is a context value that is provided to every resolve function within an execution.
 	// It is commonly
@@ -597,6 +597,18 @@ type ResolveInfo struct {
 	RootValue      interface{}
 	Operation      ast.Definition
 	VariableValues map[string]interface{}
+}
+
+func (self *ResolveInfo) Clear() {
+	self.FieldName = ""
+	clear(self.FieldASTs)
+	self.ReturnType = nil
+	self.ParentType = nil
+	self.Schema = Schema{}
+	clear(self.Fragments)
+	self.RootValue = nil
+	self.Operation = nil
+	clear(self.VariableValues)
 }
 
 type Fields map[string]*Field
@@ -699,7 +711,7 @@ type ResolveTypeParams struct {
 	Value interface{}
 
 	// Info is a collection of information about the current execution state.
-	Info ResolveInfo
+	Info *ResolveInfo
 
 	// Context argument is a context value that is provided to every resolve function within an execution.
 	// It is commonly

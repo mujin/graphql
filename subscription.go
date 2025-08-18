@@ -173,17 +173,18 @@ func ExecuteSubscription(p ExecuteParams) chan *Result {
 		}
 
 		args := getArgumentValues(fieldDef.Args, fieldNode.Arguments, exeContext.VariableValues)
-		info := ResolveInfo{
-			FieldName:      fieldName,
-			FieldASTs:      fieldNodes,
-			ReturnType:     fieldDef.Type,
-			ParentType:     operationType,
-			Schema:         p.Schema,
-			Fragments:      exeContext.Fragments,
-			RootValue:      exeContext.Root,
-			Operation:      exeContext.Operation,
-			VariableValues: exeContext.VariableValues,
-		}
+		info := resolveInfoPool.Get().(*ResolveInfo)
+		defer resolveInfoPool.Put(info)
+		info.Clear()
+		info.FieldName = fieldName
+		info.FieldASTs = fieldNodes
+		info.ReturnType = fieldDef.Type
+		info.ParentType = operationType
+		info.Schema = p.Schema
+		info.Fragments = exeContext.Fragments
+		info.RootValue = exeContext.Root
+		info.Operation = exeContext.Operation
+		info.VariableValues = exeContext.VariableValues
 
 		fieldResult, err := resolveFn(ResolveParams{
 			Source:  p.Root,
