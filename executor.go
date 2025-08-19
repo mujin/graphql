@@ -140,6 +140,43 @@ type bfsItem struct {
 
 var bfsItemSlicePool = sync.Pool{New: func() interface{} { return make([]bfsItem, 0, 64) }}
 
+// Small pools for []interface{} slices to reduce frequent allocations in list completion
+var ifaceSlicePool64 = sync.Pool{New: func() interface{} { return make([]interface{}, 64) }}
+var ifaceSlicePool256 = sync.Pool{New: func() interface{} { return make([]interface{}, 256) }}
+var ifaceSlicePool1024 = sync.Pool{New: func() interface{} { return make([]interface{}, 1024) }}
+
+func acquireInterfaceSlice(n int) ([]interface{}, func([]interface{})) {
+	// Only pool small/medium sizes; larger allocate fresh to avoid hoarding
+	switch {
+	case n <= 64:
+		buf := ifaceSlicePool64.Get().([]interface{})
+		return buf[:n], func(b []interface{}) {
+			for i := range b {
+				b[i] = nil
+			}
+			ifaceSlicePool64.Put(buf)
+		}
+	case n <= 256:
+		buf := ifaceSlicePool256.Get().([]interface{})
+		return buf[:n], func(b []interface{}) {
+			for i := range b {
+				b[i] = nil
+			}
+			ifaceSlicePool256.Put(buf)
+		}
+	case n <= 1024:
+		buf := ifaceSlicePool1024.Get().([]interface{})
+		return buf[:n], func(b []interface{}) {
+			for i := range b {
+				b[i] = nil
+			}
+			ifaceSlicePool1024.Put(buf)
+		}
+	default:
+		return make([]interface{}, n), func([]interface{}) {}
+	}
+}
+
 // Cache for DefaultResolveFn struct field lookups to avoid repeated reflection scans
 var defaultResolveFieldIndexCache = struct {
 	mutex sync.RWMutex
@@ -588,7 +625,6 @@ func collectFields(p collectFieldsParams) (fields map[string][]*ast.Field) {
 func shouldIncludeNode(eCtx *executionContext, directives []*ast.Directive) bool {
 	var (
 		skipAST, includeAST *ast.Directive
-		argValues           map[string]interface{}
 	)
 	for _, directive := range directives {
 		if directive == nil || directive.Name == nil {
@@ -603,18 +639,57 @@ func shouldIncludeNode(eCtx *executionContext, directives []*ast.Directive) bool
 	}
 	// precedence: skipAST > includeAST
 	if skipAST != nil {
-		argValues = getArgumentValues(SkipDirective.Args, skipAST.Arguments, eCtx.VariableValues)
-		if skipIf, ok := argValues["if"].(bool); ok && skipIf {
-			return false // excluded selectionSet's fields
+		if ifVal, ok := quickDirectiveIfBool(eCtx, skipAST); ok {
+			if ifVal {
+				return false
+			}
+		} else {
+			argValues := getArgumentValues(SkipDirective.Args, skipAST.Arguments, eCtx.VariableValues)
+			if skipIf, ok := argValues["if"].(bool); ok && skipIf {
+				return false
+			}
 		}
 	}
 	if includeAST != nil {
-		argValues = getArgumentValues(IncludeDirective.Args, includeAST.Arguments, eCtx.VariableValues)
-		if includeIf, ok := argValues["if"].(bool); ok && !includeIf {
-			return false // excluded selectionSet's fields
+		if ifVal, ok := quickDirectiveIfBool(eCtx, includeAST); ok {
+			if !ifVal {
+				return false
+			}
+		} else {
+			argValues := getArgumentValues(IncludeDirective.Args, includeAST.Arguments, eCtx.VariableValues)
+			if includeIf, ok := argValues["if"].(bool); ok && !includeIf {
+				return false
+			}
 		}
 	}
 	return true
+}
+
+// quickDirectiveIfBool tries to read the required boolean "if" argument directly
+// from the AST/variables without full coercion. Returns (value, true) when fully
+// determined, otherwise (false, false) to signal fallback.
+func quickDirectiveIfBool(eCtx *executionContext, d *ast.Directive) (bool, bool) {
+	if d == nil || d.Arguments == nil {
+		return false, false
+	}
+	for _, a := range d.Arguments {
+		if a == nil || a.Name == nil || a.Value == nil || a.Name.Value != "if" {
+			continue
+		}
+		switch v := a.Value.(type) {
+		case *ast.BooleanValue:
+			return v.Value, true
+		case *ast.Variable:
+			if v.Name != nil {
+				if val, ok := eCtx.VariableValues[v.Name.Value]; ok {
+					b, bok := val.(bool)
+					return b, bok
+				}
+			}
+		}
+		break
+	}
+	return false, false
 }
 
 // Determines if a fragment is applicable to the given type.
@@ -809,7 +884,7 @@ func completeValueCatchingError(eCtx *executionContext, returnType Type, fieldAS
 	}()
 
 	if returnType, ok := returnType.(*NonNull); ok {
-		completed := completeValue(eCtx, returnType, fieldASTs, info, result)
+		completed := completeValue(eCtx, returnType.OfType, fieldASTs, info, result)
 		return completed
 	}
 	completed = completeValue(eCtx, returnType, fieldASTs, info, result)
@@ -1016,16 +1091,67 @@ func completeLeafValue(returnType Leaf, result interface{}) interface{} {
 
 // completeListValue complete a list value by completing each item in the list with the inner type
 func completeListValue(eCtx *executionContext, returnType *List, fieldASTs []*ast.Field, info ResolveInfo, result interface{}) interface{} {
-	// Fast path for []interface{} to avoid reflection
-	if list, ok := result.([]interface{}); ok {
-		itemType := returnType.OfType
-		n := len(list)
-		out := make([]interface{}, n)
-		for i := 0; i < n; i++ {
+	// Typed fast paths to avoid reflection where possible
+	itemType := returnType.OfType
+	switch list := result.(type) {
+	case []interface{}:
+		out, release := acquireInterfaceSlice(len(list))
+		for i := 0; i < len(list); i++ {
 			out[i] = completeValueCatchingError(eCtx, itemType, fieldASTs, info, list[i])
 		}
-		return out
+		defer release(out)
+		return append([]interface{}(nil), out...)
+	case []map[string]interface{}:
+		out, release := acquireInterfaceSlice(len(list))
+		for i := 0; i < len(list); i++ {
+			out[i] = completeValueCatchingError(eCtx, itemType, fieldASTs, info, list[i])
+		}
+		defer release(out)
+		return append([]interface{}(nil), out...)
+	case [][]interface{}:
+		out, release := acquireInterfaceSlice(len(list))
+		for i := 0; i < len(list); i++ {
+			out[i] = completeValueCatchingError(eCtx, itemType, fieldASTs, info, list[i])
+		}
+		defer release(out)
+		return append([]interface{}(nil), out...)
+	case []string:
+		out, release := acquireInterfaceSlice(len(list))
+		for i := 0; i < len(list); i++ {
+			out[i] = completeValueCatchingError(eCtx, itemType, fieldASTs, info, list[i])
+		}
+		defer release(out)
+		return append([]interface{}(nil), out...)
+	case []int:
+		out, release := acquireInterfaceSlice(len(list))
+		for i := 0; i < len(list); i++ {
+			out[i] = completeValueCatchingError(eCtx, itemType, fieldASTs, info, list[i])
+		}
+		defer release(out)
+		return append([]interface{}(nil), out...)
+	case []int64:
+		out, release := acquireInterfaceSlice(len(list))
+		for i := 0; i < len(list); i++ {
+			out[i] = completeValueCatchingError(eCtx, itemType, fieldASTs, info, list[i])
+		}
+		defer release(out)
+		return append([]interface{}(nil), out...)
+	case []float64:
+		out, release := acquireInterfaceSlice(len(list))
+		for i := 0; i < len(list); i++ {
+			out[i] = completeValueCatchingError(eCtx, itemType, fieldASTs, info, list[i])
+		}
+		defer release(out)
+		return append([]interface{}(nil), out...)
+	case []bool:
+		out, release := acquireInterfaceSlice(len(list))
+		for i := 0; i < len(list); i++ {
+			out[i] = completeValueCatchingError(eCtx, itemType, fieldASTs, info, list[i])
+		}
+		defer release(out)
+		return append([]interface{}(nil), out...)
 	}
+
 	resultVal := reflect.ValueOf(result)
 	if resultVal.Kind() == reflect.Ptr {
 		resultVal = resultVal.Elem()
@@ -1043,13 +1169,14 @@ func completeListValue(eCtx *executionContext, returnType *List, fieldASTs []*as
 		panic(gqlerrors.FormatError(err))
 	}
 
-	itemType := returnType.OfType
-	completedResults := make([]interface{}, resultVal.Len())
-	for i := 0; i < resultVal.Len(); i++ {
+	n := resultVal.Len()
+	out, release := acquireInterfaceSlice(n)
+	for i := 0; i < n; i++ {
 		val := resultVal.Index(i).Interface()
-		completedResults[i] = completeValueCatchingError(eCtx, itemType, fieldASTs, info, val)
+		out[i] = completeValueCatchingError(eCtx, itemType, fieldASTs, info, val)
 	}
-	return completedResults
+	defer release(out)
+	return append([]interface{}(nil), out...)
 }
 
 // defaultResolveTypeFn If a resolveType function is not given, then a default resolve behavior is
