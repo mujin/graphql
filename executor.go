@@ -110,6 +110,12 @@ type executionContext struct {
 	VariableValues map[string]interface{}
 	Errors         []gqlerrors.FormattedError
 	Context        context.Context
+
+	// Caches to reduce repeated work per execution
+	// Cache resolved argument values for a given field AST (variables are constant per execution)
+	argumentsValueCache map[*ast.Field]map[string]interface{}
+	// Cache typeFromAST results for fragment type conditions
+	typeFromAstCache map[ast.Type]Type
 }
 
 func buildExecutionContext(p buildExecutionCtxParams) (*executionContext, error) {
@@ -155,6 +161,9 @@ func buildExecutionContext(p buildExecutionCtxParams) (*executionContext, error)
 	eCtx.Operation = operation
 	eCtx.VariableValues = variableValues
 	eCtx.Context = p.Context
+	// initialize caches
+	eCtx.argumentsValueCache = make(map[*ast.Field]map[string]interface{})
+	eCtx.typeFromAstCache = make(map[ast.Type]Type)
 	return eCtx, nil
 }
 
@@ -292,14 +301,11 @@ func executeSubFields(p executeFieldsParams) map[string]interface{} {
 		p.Fields = map[string][]*ast.Field{}
 	}
 
-	var finalResults map[string]interface{}
+	finalResults := make(map[string]interface{}, len(p.Fields))
 	for responseName, fieldASTs := range p.Fields {
 		resolved, state := resolveField(p.ExecutionContext, p.ParentType, p.Source, fieldASTs)
 		if state.hasNoFieldDefs {
 			continue
-		}
-		if finalResults == nil {
-			finalResults = map[string]interface{}{}
 		}
 		finalResults[responseName] = resolved
 	}
@@ -327,11 +333,55 @@ func (d *dethunkQueue) shift() func() {
 // the reference graphql-js implementation, which calls Promise.all on thunks at each depth (which
 // is an implicit parallel descent).
 func dethunkMapWithBreadthFirstTraversal(finalResults map[string]interface{}) {
-	dethunkQueue := &dethunkQueue{DethunkFuncs: []func(){}}
-	dethunkMapBreadthFirst(finalResults, dethunkQueue)
-	for len(dethunkQueue.DethunkFuncs) > 0 {
-		f := dethunkQueue.shift()
-		f()
+	// Iterative BFS without allocating closures for child enqueues
+	type queueItem struct {
+		mapResult   map[string]interface{}
+		sliceResult []interface{}
+		isMap       bool
+	}
+	queue := make([]queueItem, 0, 8)
+	queue = append(queue, queueItem{mapResult: finalResults, isMap: true})
+	head := 0
+	for head < len(queue) {
+		item := queue[head]
+		head++
+		if item.isMap {
+			for key, value := range item.mapResult {
+				if function, ok := value.(func() interface{}); ok {
+					item.mapResult[key] = function()
+				}
+				switch value := item.mapResult[key].(type) {
+				case map[string]interface{}:
+					queue = append(queue, queueItem{
+						mapResult: value,
+						isMap:     true,
+					})
+				case []interface{}:
+					queue = append(queue, queueItem{
+						sliceResult: value,
+						isMap:       false,
+					})
+				}
+			}
+		} else {
+			for index, value := range item.sliceResult {
+				if function, ok := value.(func() interface{}); ok {
+					item.sliceResult[index] = function()
+				}
+				switch value := item.sliceResult[index].(type) {
+				case map[string]interface{}:
+					queue = append(queue, queueItem{
+						mapResult: value,
+						isMap:     true,
+					})
+				case []interface{}:
+					queue = append(queue, queueItem{
+						sliceResult: value,
+						isMap:       false,
+					})
+				}
+			}
+		}
 	}
 }
 
@@ -521,7 +571,7 @@ func doesFragmentConditionMatch(eCtx *executionContext, fragment ast.Node, ttype
 		if typeConditionAST == nil {
 			return true
 		}
-		conditionalType, err := typeFromAST(eCtx.Schema, typeConditionAST)
+		conditionalType, err := typeFromASTCached(eCtx, typeConditionAST)
 		if err != nil {
 			return false
 		}
@@ -542,7 +592,7 @@ func doesFragmentConditionMatch(eCtx *executionContext, fragment ast.Node, ttype
 		if typeConditionAST == nil {
 			return true
 		}
-		conditionalType, err := typeFromAST(eCtx.Schema, typeConditionAST)
+		conditionalType, err := typeFromASTCached(eCtx, typeConditionAST)
 		if err != nil {
 			return false
 		}
@@ -561,6 +611,21 @@ func doesFragmentConditionMatch(eCtx *executionContext, fragment ast.Node, ttype
 	}
 
 	return false
+}
+
+// typeFromASTCached memoizes typeFromAST results for the duration of execution
+func typeFromASTCached(executionContext *executionContext, astType ast.Type) (Type, error) {
+	if astType == nil {
+		return nil, nil
+	}
+	if cachedAstType, ok := executionContext.typeFromAstCache[astType]; ok {
+		return cachedAstType, nil
+	}
+	resolved, err := typeFromAST(executionContext.Schema, astType)
+	if err == nil {
+		executionContext.typeFromAstCache[astType] = resolved
+	}
+	return resolved, err
 }
 
 // Implements the logic to compute the key of a given field’s entry
@@ -623,8 +688,14 @@ func resolveField(eCtx *executionContext, parentType *Object, source interface{}
 
 	// Build a map of arguments from the field.arguments AST, using the
 	// variables scope to fulfill any variable references.
-	// TODO: find a way to memoize, in case this field is within a List type.
-	args := getArgumentValues(fieldDef.Args, fieldAST.Arguments, eCtx.VariableValues)
+	// Memoize per field AST, since variables are constant within an execution.
+	var args map[string]interface{}
+	if cached, ok := eCtx.argumentsValueCache[fieldAST]; ok {
+		args = cached
+	} else {
+		args = getArgumentValues(fieldDef.Args, fieldAST.Arguments, eCtx.VariableValues)
+		eCtx.argumentsValueCache[fieldAST] = args
+	}
 
 	info := ResolveInfo{
 		FieldName:      fieldName,

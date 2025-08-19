@@ -64,13 +64,13 @@ func getArgumentValues(
 	argDefs []*Argument, argASTs []*ast.Argument,
 	variableValues map[string]interface{}) map[string]interface{} {
 
-	argASTMap := map[string]*ast.Argument{}
+	argASTMap := make(map[string]*ast.Argument, len(argASTs))
 	for _, argAST := range argASTs {
 		if argAST.Name != nil {
 			argASTMap[argAST.Name.Value] = argAST
 		}
 	}
-	results := map[string]interface{}{}
+	results := make(map[string]interface{}, len(argDefs))
 	for _, argDef := range argDefs {
 		var (
 			tmp   interface{}
