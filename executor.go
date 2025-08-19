@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
+	"unsafe"
 
 	"github.com/graphql-go/graphql/gqlerrors"
 	"github.com/graphql-go/graphql/language/ast"
@@ -116,6 +118,66 @@ type executionContext struct {
 	argumentsValueCache map[*ast.Field]map[string]interface{}
 	// Cache typeFromAST results for fragment type conditions
 	typeFromAstCache map[ast.Type]Type
+	// Cache sub-field ASTs for object completion keyed by (object type, fieldASTs identity)
+	subFieldsCache map[subFieldsCacheKey]map[string][]*ast.Field
+	// Reusable queue buffer for dethunk BFS traversal to reduce allocations
+	bfsQueue []bfsItem
+}
+
+// subFieldsCacheKey identifies a sub-selection by object type and the identity of fieldASTs
+type subFieldsCacheKey struct {
+	object   *Object
+	slicePtr uintptr
+	length   int
+}
+
+// bfsItem is used by dethunk BFS traversal queue
+type bfsItem struct {
+	mapResult   map[string]interface{}
+	sliceResult []interface{}
+	isMap       bool
+}
+
+var bfsItemSlicePool = sync.Pool{New: func() interface{} { return make([]bfsItem, 0, 64) }}
+
+// Cache for DefaultResolveFn struct field lookups to avoid repeated reflection scans
+var defaultResolveFieldIndexCache = struct {
+	mutex sync.RWMutex
+	cache map[reflect.Type]map[string]int
+}{
+	cache: make(map[reflect.Type]map[string]int),
+}
+
+func getStructFieldIndexCache(reflectType reflect.Type) map[string]int {
+	defaultResolveFieldIndexCache.mutex.RLock()
+	values, ok := defaultResolveFieldIndexCache.cache[reflectType]
+	defaultResolveFieldIndexCache.mutex.RUnlock()
+	if ok {
+		return values
+	}
+	// build
+	indexMap := make(map[string]int, reflectType.NumField()*3)
+	for index := 0; index < reflectType.NumField(); index++ {
+		field := reflectType.Field(index)
+		name := field.Name
+		// direct name (case-sensitive)
+		indexMap[name] = index
+		// case-insensitive
+		indexMap[strings.ToLower(name)] = index
+		// json/graphql tags
+		for _, tagName := range []string{"json", "graphql"} {
+			if tag := field.Tag.Get(tagName); tag != "" {
+				parts := strings.Split(tag, ",")
+				if len(parts) > 0 && parts[0] != "" && parts[0] != "-" {
+					indexMap[parts[0]] = index
+				}
+			}
+		}
+	}
+	defaultResolveFieldIndexCache.mutex.Lock()
+	defaultResolveFieldIndexCache.cache[reflectType] = indexMap
+	defaultResolveFieldIndexCache.mutex.Unlock()
+	return indexMap
 }
 
 func buildExecutionContext(p buildExecutionCtxParams) (*executionContext, error) {
@@ -164,6 +226,7 @@ func buildExecutionContext(p buildExecutionCtxParams) (*executionContext, error)
 	// initialize caches
 	eCtx.argumentsValueCache = make(map[*ast.Field]map[string]interface{})
 	eCtx.typeFromAstCache = make(map[ast.Type]Type)
+	eCtx.subFieldsCache = make(map[subFieldsCacheKey]map[string][]*ast.Field)
 	return eCtx, nil
 }
 
@@ -333,14 +396,10 @@ func (d *dethunkQueue) shift() func() {
 // the reference graphql-js implementation, which calls Promise.all on thunks at each depth (which
 // is an implicit parallel descent).
 func dethunkMapWithBreadthFirstTraversal(finalResults map[string]interface{}) {
-	// Iterative BFS without allocating closures for child enqueues
-	type queueItem struct {
-		mapResult   map[string]interface{}
-		sliceResult []interface{}
-		isMap       bool
-	}
-	queue := make([]queueItem, 0, 8)
-	queue = append(queue, queueItem{mapResult: finalResults, isMap: true})
+	// Iterative BFS using pooled queue slice to reduce allocations
+	queueAny := bfsItemSlicePool.Get()
+	queue := queueAny.([]bfsItem)
+	queue = append(queue, bfsItem{mapResult: finalResults, isMap: true})
 	head := 0
 	for head < len(queue) {
 		item := queue[head]
@@ -352,15 +411,9 @@ func dethunkMapWithBreadthFirstTraversal(finalResults map[string]interface{}) {
 				}
 				switch value := item.mapResult[key].(type) {
 				case map[string]interface{}:
-					queue = append(queue, queueItem{
-						mapResult: value,
-						isMap:     true,
-					})
+					queue = append(queue, bfsItem{mapResult: value, isMap: true})
 				case []interface{}:
-					queue = append(queue, queueItem{
-						sliceResult: value,
-						isMap:       false,
-					})
+					queue = append(queue, bfsItem{sliceResult: value, isMap: false})
 				}
 			}
 		} else {
@@ -370,19 +423,16 @@ func dethunkMapWithBreadthFirstTraversal(finalResults map[string]interface{}) {
 				}
 				switch value := item.sliceResult[index].(type) {
 				case map[string]interface{}:
-					queue = append(queue, queueItem{
-						mapResult: value,
-						isMap:     true,
-					})
+					queue = append(queue, bfsItem{mapResult: value, isMap: true})
 				case []interface{}:
-					queue = append(queue, queueItem{
-						sliceResult: value,
-						isMap:       false,
-					})
+					queue = append(queue, bfsItem{sliceResult: value, isMap: false})
 				}
 			}
 		}
 	}
+	// recycle queue
+	queue = queue[:0]
+	bfsItemSlicePool.Put(queue)
 }
 
 func dethunkMapBreadthFirst(m map[string]interface{}, dethunkQueue *dethunkQueue) {
@@ -465,10 +515,15 @@ func collectFields(p collectFieldsParams) (fields map[string][]*ast.Field) {
 	}
 	fields = p.Fields
 	if fields == nil {
-		fields = map[string][]*ast.Field{}
+		// Pre-size: number of selections is a good heuristic
+		if p.SelectionSet != nil {
+			fields = make(map[string][]*ast.Field, len(p.SelectionSet.Selections))
+		} else {
+			fields = map[string][]*ast.Field{}
+		}
 	}
 	if p.VisitedFragmentNames == nil {
-		p.VisitedFragmentNames = map[string]bool{}
+		p.VisitedFragmentNames = make(map[string]bool, 8)
 	}
 	for _, iSelection := range p.SelectionSet.Selections {
 		switch selection := iSelection.(type) {
@@ -711,21 +766,28 @@ func resolveField(eCtx *executionContext, parentType *Object, source interface{}
 
 	var resolveFnError error
 
-	extErrs, resolveFieldFinishFn := handleExtensionsResolveFieldDidStart(eCtx.Schema.extensions, eCtx, &info)
-	if len(extErrs) != 0 {
-		eCtx.Errors = append(eCtx.Errors, extErrs...)
-	}
-
-	result, resolveFnError = resolveFn(ResolveParams{
-		Source:  source,
-		Args:    args,
-		Info:    info,
-		Context: eCtx.Context,
-	})
-
-	extErrs = resolveFieldFinishFn(result, resolveFnError)
-	if len(extErrs) != 0 {
-		eCtx.Errors = append(eCtx.Errors, extErrs...)
+	if len(eCtx.Schema.extensions) != 0 {
+		extErrs, resolveFieldFinishFn := handleExtensionsResolveFieldDidStart(eCtx.Schema.extensions, eCtx, &info)
+		if len(extErrs) != 0 {
+			eCtx.Errors = append(eCtx.Errors, extErrs...)
+		}
+		result, resolveFnError = resolveFn(ResolveParams{
+			Source:  source,
+			Args:    args,
+			Info:    info,
+			Context: eCtx.Context,
+		})
+		extErrs = resolveFieldFinishFn(result, resolveFnError)
+		if len(extErrs) != 0 {
+			eCtx.Errors = append(eCtx.Errors, extErrs...)
+		}
+	} else {
+		result, resolveFnError = resolveFn(ResolveParams{
+			Source:  source,
+			Args:    args,
+			Info:    info,
+			Context: eCtx.Context,
+		})
 	}
 
 	if resolveFnError != nil {
@@ -905,23 +967,34 @@ func completeObjectValue(eCtx *executionContext, returnType *Object, fieldASTs [
 	}
 
 	// Collect sub-fields to execute to complete this value.
-	subFieldASTs := map[string][]*ast.Field{}
-	visitedFragmentNames := map[string]bool{}
-	for _, fieldAST := range fieldASTs {
-		if fieldAST == nil {
-			continue
-		}
-		selectionSet := fieldAST.SelectionSet
-		if selectionSet != nil {
-			innerParams := collectFieldsParams{
-				ExeContext:           eCtx,
-				RuntimeType:          returnType,
-				SelectionSet:         selectionSet,
-				Fields:               subFieldASTs,
-				VisitedFragmentNames: visitedFragmentNames,
+	// Cache by (object type, fieldASTs identity) to avoid recomputing across list items.
+	var key subFieldsCacheKey
+	if len(fieldASTs) > 0 {
+		key = subFieldsCacheKey{object: returnType, slicePtr: uintptr(unsafe.Pointer(&fieldASTs[0])), length: len(fieldASTs)}
+	}
+	var subFieldASTs map[string][]*ast.Field
+	if cached, ok := eCtx.subFieldsCache[key]; ok {
+		subFieldASTs = cached
+	} else {
+		subFieldASTs = map[string][]*ast.Field{}
+		visitedFragmentNames := map[string]bool{}
+		for _, fieldAST := range fieldASTs {
+			if fieldAST == nil {
+				continue
 			}
-			subFieldASTs = collectFields(innerParams)
+			selectionSet := fieldAST.SelectionSet
+			if selectionSet != nil {
+				innerParams := collectFieldsParams{
+					ExeContext:           eCtx,
+					RuntimeType:          returnType,
+					SelectionSet:         selectionSet,
+					Fields:               subFieldASTs,
+					VisitedFragmentNames: visitedFragmentNames,
+				}
+				subFieldASTs = collectFields(innerParams)
+			}
 		}
+		eCtx.subFieldsCache[key] = subFieldASTs
 	}
 	executeFieldsParams := executeFieldsParams{
 		ExecutionContext: eCtx,
@@ -943,6 +1016,16 @@ func completeLeafValue(returnType Leaf, result interface{}) interface{} {
 
 // completeListValue complete a list value by completing each item in the list with the inner type
 func completeListValue(eCtx *executionContext, returnType *List, fieldASTs []*ast.Field, info ResolveInfo, result interface{}) interface{} {
+	// Fast path for []interface{} to avoid reflection
+	if list, ok := result.([]interface{}); ok {
+		itemType := returnType.OfType
+		n := len(list)
+		out := make([]interface{}, n)
+		for i := 0; i < n; i++ {
+			out[i] = completeValueCatchingError(eCtx, itemType, fieldASTs, info, list[i])
+		}
+		return out
+	}
 	resultVal := reflect.ValueOf(result)
 	if resultVal.Kind() == reflect.Ptr {
 		resultVal = resultVal.Elem()
@@ -961,11 +1044,10 @@ func completeListValue(eCtx *executionContext, returnType *List, fieldASTs []*as
 	}
 
 	itemType := returnType.OfType
-	completedResults := make([]interface{}, 0, resultVal.Len())
+	completedResults := make([]interface{}, resultVal.Len())
 	for i := 0; i < resultVal.Len(); i++ {
 		val := resultVal.Index(i).Interface()
-		completedItem := completeValueCatchingError(eCtx, itemType, fieldASTs, info, val)
-		completedResults = append(completedResults, completedItem)
+		completedResults[i] = completeValueCatchingError(eCtx, itemType, fieldASTs, info, val)
 	}
 	return completedResults
 }
@@ -1017,30 +1099,15 @@ func DefaultResolveFn(p ResolveParams) (interface{}, error) {
 	}
 
 	if sourceVal.Type().Kind() == reflect.Struct {
-		for i := 0; i < sourceVal.NumField(); i++ {
-			valueField := sourceVal.Field(i)
-			typeField := sourceVal.Type().Field(i)
-			// try matching the field name first
-			if strings.EqualFold(typeField.Name, p.Info.FieldName) {
-				return valueField.Interface(), nil
-			}
-			tag := typeField.Tag
-			checkTag := func(tagName string) bool {
-				t := tag.Get(tagName)
-				tOptions := strings.Split(t, ",")
-				if len(tOptions) == 0 {
-					return false
-				}
-				if tOptions[0] != p.Info.FieldName {
-					return false
-				}
-				return true
-			}
-			if checkTag("json") || checkTag("graphql") {
-				return valueField.Interface(), nil
-			} else {
-				continue
-			}
+		// Use cached field index map to avoid scanning all fields
+		indexMap := getStructFieldIndexCache(sourceVal.Type())
+		// try exact, then lower-case
+		idx, ok := indexMap[p.Info.FieldName]
+		if !ok {
+			idx, ok = indexMap[strings.ToLower(p.Info.FieldName)]
+		}
+		if ok {
+			return sourceVal.Field(idx).Interface(), nil
 		}
 		return nil, nil
 	}
