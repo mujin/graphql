@@ -1004,14 +1004,14 @@ func (gt *Enum) Values() []*EnumValueDefinition {
 	return gt.values
 }
 func (gt *Enum) Serialize(value interface{}) interface{} {
-	v := value
-	rv := reflect.ValueOf(v)
-	if kind := rv.Kind(); kind == reflect.Ptr && rv.IsNil() {
-		return nil
-	} else if kind == reflect.Ptr {
-		v = reflect.Indirect(reflect.ValueOf(v)).Interface()
+	rv := reflect.ValueOf(value)
+	if kind := rv.Kind(); kind == reflect.Ptr {
+		if rv.IsNil() {
+			return nil
+		}
+		rv = reflect.Indirect(rv)
 	}
-	if enumValue, ok := gt.getNameLookup()[fmt.Sprintf("%v", v)]; ok {
+	if enumValue, ok := gt.getNameLookup()[rv.String()]; ok {
 		return enumValue.Name
 	}
 	return nil
