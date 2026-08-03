@@ -656,9 +656,7 @@ func ExecutePlanWithPool(plan *Plan, p ExecuteParams, resultPool ResultPool) (re
 
 	select {
 	case <-ctx.Done():
-		// The goroutine still owns its pooled Result and will send it
-		// exactly once; drain it back into the pool instead of
-		// abandoning it.
+		// the goroutine still owns a pooled Result and sends it exactly once; recycle it
 		go func() {
 			if lateResult := <-resultChannel; lateResult != nil {
 				resultPool.Put(lateResult)

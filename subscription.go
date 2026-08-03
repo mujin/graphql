@@ -96,8 +96,7 @@ func SubscribePlannedWithPool(p Params, schema *Schema, planCache *PlanCache, re
 
 // mergeSynthArgs merges the synthetic variables a normalizing
 // PlanCache extracted from literals into the caller's variables.
-// Caller variables win on collision; with no synth args the caller's
-// map is returned as-is.
+// Caller variables win on collision.
 func mergeSynthArgs(variableValues, synthArgs map[string]interface{}) map[string]interface{} {
 	if len(synthArgs) == 0 {
 		return variableValues
@@ -152,9 +151,9 @@ func ExecuteSubscriptionWithPool(p ExecuteParams, resultPool ResultPool) chan *R
 }
 
 // ExecuteSubscriptionPlanWithPool is the planned variant of
-// ExecuteSubscriptionWithPool: the subscription field is resolved once
-// as usual, but every event is executed through the pre-built plan,
-// skipping the per-event field collection and schema walks.
+// ExecuteSubscriptionWithPool: the subscription field is resolved once,
+// but every event is executed through the pre-built plan, skipping the
+// per-event field collection and schema walks.
 func ExecuteSubscriptionPlanWithPool(plan *Plan, p ExecuteParams, resultPool ResultPool) chan *Result {
 	if plan == nil {
 		result := resultPool.Get()
