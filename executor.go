@@ -143,6 +143,22 @@ type executionContext struct {
 	VariableValues map[string]interface{}
 	Errors         []gqlerrors.FormattedError
 	Context        context.Context
+
+	// memoizes the sub-field collection done by completeObjectValue, see collectSubFields.
+	// scoped to one execution because @skip and @include resolve against VariableValues
+	subFieldsCache map[subFieldsCacheKey]map[string][]*ast.Field
+}
+
+// Identifies one sub-field collection within a single execution.
+// The field ASTs are identified by the address of their backing array rather than by their
+// contents, because completeListValue hands the very same slice to every element of a list and
+// that shared address is what makes the repeated collection recognisable. Keeping the key in the
+// cache pins the backing array, so its address cannot be recycled by a later allocation and
+// produce a false hit.
+type subFieldsCacheKey struct {
+	fieldASTs   **ast.Field
+	fieldCount  int
+	runtimeType *Object
 }
 
 func buildExecutionContext(p buildExecutionCtxParams) (*executionContext, error) {
@@ -842,6 +858,52 @@ func completeAbstractValue(eCtx *executionContext, returnType Abstract, fieldAST
 	return completeObjectValue(eCtx, runtimeType, fieldASTs, info, result, finalResult, resultPool)
 }
 
+// Collects the sub-fields to execute for one object value, memoized on the execution context.
+// Every element of a list repeats this collection with the same field ASTs and the same runtime
+// type, so uncached a list of n objects walks the identical selection set n times. The runtime
+// type is part of the key because fragment conditions are matched against it. Returned maps are
+// shared between callers and must stay read-only: executeSubFields only ranges over them.
+func collectSubFields(eCtx *executionContext, returnType *Object, fieldASTs []*ast.Field) map[string][]*ast.Field {
+	var cacheKey subFieldsCacheKey
+	if len(fieldASTs) > 0 {
+		cacheKey = subFieldsCacheKey{
+			fieldASTs:   &fieldASTs[0],
+			fieldCount:  len(fieldASTs),
+			runtimeType: returnType,
+		}
+		if cachedSubFieldASTs, ok := eCtx.subFieldsCache[cacheKey]; ok {
+			return cachedSubFieldASTs
+		}
+	}
+
+	subFieldASTs := map[string][]*ast.Field{}
+	visitedFragmentNames := map[string]bool{}
+	for _, fieldAST := range fieldASTs {
+		if fieldAST == nil {
+			continue
+		}
+		selectionSet := fieldAST.SelectionSet
+		if selectionSet != nil {
+			innerParams := collectFieldsParams{
+				ExeContext:           eCtx,
+				RuntimeType:          returnType,
+				SelectionSet:         selectionSet,
+				Fields:               subFieldASTs,
+				VisitedFragmentNames: visitedFragmentNames,
+			}
+			subFieldASTs = collectFields(innerParams)
+		}
+	}
+
+	if cacheKey.fieldASTs != nil {
+		if eCtx.subFieldsCache == nil {
+			eCtx.subFieldsCache = map[subFieldsCacheKey]map[string][]*ast.Field{}
+		}
+		eCtx.subFieldsCache[cacheKey] = subFieldASTs
+	}
+	return subFieldASTs
+}
+
 // completeObjectValue complete an Object value by executing all sub-selections.
 func completeObjectValue(eCtx *executionContext, returnType *Object, fieldASTs []*ast.Field, info *ResolveInfo, result interface{}, finalResult *Result, resultPool ResultPool) interface{} {
 	// If there is an isTypeOf predicate function, call it with the
@@ -861,24 +923,7 @@ func completeObjectValue(eCtx *executionContext, returnType *Object, fieldASTs [
 	}
 
 	// Collect sub-fields to execute to complete this value.
-	subFieldASTs := map[string][]*ast.Field{}
-	visitedFragmentNames := map[string]bool{}
-	for _, fieldAST := range fieldASTs {
-		if fieldAST == nil {
-			continue
-		}
-		selectionSet := fieldAST.SelectionSet
-		if selectionSet != nil {
-			innerParams := collectFieldsParams{
-				ExeContext:           eCtx,
-				RuntimeType:          returnType,
-				SelectionSet:         selectionSet,
-				Fields:               subFieldASTs,
-				VisitedFragmentNames: visitedFragmentNames,
-			}
-			subFieldASTs = collectFields(innerParams)
-		}
-	}
+	subFieldASTs := collectSubFields(eCtx, returnType, fieldASTs)
 	executeFieldsParams := executeFieldsParams{
 		ExecutionContext: eCtx,
 		ParentType:       returnType,
