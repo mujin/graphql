@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/graphql-go/graphql/gqlerrors"
+	"github.com/graphql-go/graphql/language/ast"
 	"github.com/graphql-go/graphql/language/parser"
 	"github.com/graphql-go/graphql/language/source"
 )
@@ -67,6 +68,12 @@ type PlanResult struct {
 	Plan      *Plan
 	SynthArgs map[string]interface{}
 	Errors    []gqlerrors.FormattedError
+
+	// Doc is the parsed request document, set whenever parsing
+	// succeeded (even if validation or planning then failed). Lets
+	// callers attach the request to access logs the same way
+	// DoWithPool sets Result.Request.
+	Doc *ast.Document
 }
 
 // internal cache entry layout. Stored as the value of a list.Element;
@@ -151,7 +158,7 @@ func (c *PlanCache) Get(schema *Schema, query, operationName string) PlanResult 
 	}
 	normDoc, synthArgs, normKey, normErr := normalizeDocument(schema, doc, operationName)
 	if normErr != nil {
-		return PlanResult{Errors: gqlerrors.FormatErrors(normErr)}
+		return PlanResult{Errors: gqlerrors.FormatErrors(normErr), Doc: doc}
 	}
 	if normKey == "" {
 		// Normalization isn't applicable (op-not-found, ambiguous
@@ -166,26 +173,29 @@ func (c *PlanCache) Get(schema *Schema, query, operationName string) PlanResult 
 	}
 	cacheKey := operationName + "\x00" + normKey
 	if pr, ok := c.lookup(schema, cacheKey); ok {
-		// Stash this call's synthArgs onto the returned result.
-		// The cached PlanResult deliberately stores no synthArgs
-		// — those are per-call, derived freshly from the literals
-		// in the incoming query.
+		// Stash this call's synthArgs and freshly parsed doc onto the
+		// returned result. The cached PlanResult deliberately stores
+		// neither — those are per-call, derived from the literals in
+		// the incoming query.
 		pr.SynthArgs = synthArgs
+		pr.Doc = doc
 		return pr
 	}
 	if vr := ValidateDocument(schema, normDoc, nil); !vr.IsValid {
 		pr := PlanResult{Errors: vr.Errors}
 		c.store(schema, cacheKey, pr)
+		pr.Doc = doc
 		return pr
 	}
 	plan, err := PlanQuery(schema, normDoc, operationName)
 	if err != nil {
 		pr := PlanResult{Errors: gqlerrors.FormatErrors(err)}
 		c.store(schema, cacheKey, pr)
+		pr.Doc = doc
 		return pr
 	}
 	c.store(schema, cacheKey, PlanResult{Plan: plan})
-	return PlanResult{Plan: plan, SynthArgs: synthArgs}
+	return PlanResult{Plan: plan, SynthArgs: synthArgs, Doc: doc}
 }
 
 // HitsMisses returns the cumulative hit and miss counts. Useful for
@@ -269,11 +279,11 @@ func planAndValidate(schema *Schema, query, operationName string) PlanResult {
 		return PlanResult{Errors: gqlerrors.FormatErrors(parseErr)}
 	}
 	if vr := ValidateDocument(schema, doc, nil); !vr.IsValid {
-		return PlanResult{Errors: vr.Errors}
+		return PlanResult{Errors: vr.Errors, Doc: doc}
 	}
 	plan, err := PlanQuery(schema, doc, operationName)
 	if err != nil {
-		return PlanResult{Errors: gqlerrors.FormatErrors(err)}
+		return PlanResult{Errors: gqlerrors.FormatErrors(err), Doc: doc}
 	}
-	return PlanResult{Plan: plan}
+	return PlanResult{Plan: plan, Doc: doc}
 }

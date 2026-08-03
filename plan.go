@@ -28,6 +28,7 @@ import (
 // changes) and callers should re-plan.
 type Plan struct {
 	schema     *Schema
+	doc        *ast.Document
 	operation  *ast.OperationDefinition
 	fragments  map[string]ast.Definition
 	rootType   *Object
@@ -152,6 +153,7 @@ func PlanQuery(schema *Schema, doc *ast.Document, operationName string) (*Plan, 
 
 	plan := &Plan{
 		schema:     schema,
+		doc:        doc,
 		operation:  operation,
 		fragments:  fragments,
 		rootType:   rootType,
@@ -598,6 +600,7 @@ func ExecutePlanWithPool(plan *Plan, p ExecuteParams, resultPool ResultPool) (re
 	resultChannel := make(chan *Result, 2)
 	go func() {
 		out := resultPool.Get()
+		out.Request = plan.doc
 		defer func() {
 			if err := recover(); err != nil {
 				if e, ok := err.(error); ok {
@@ -651,6 +654,7 @@ func ExecutePlanWithPool(plan *Plan, p ExecuteParams, resultPool ResultPool) (re
 	select {
 	case <-ctx.Done():
 		r := resultPool.Get()
+		r.Request = plan.doc
 		r.Errors = append(r.Errors, gqlerrors.FormatError(ctx.Err()))
 		return r
 	case r := <-resultChannel:

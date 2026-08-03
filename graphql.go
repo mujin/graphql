@@ -66,6 +66,30 @@ func Do(p Params) *Result {
 	return DoWithPool(p, &SimpleResultPool{})
 }
 
+// DoPlannedWithPool is DoWithPool routed through a PlanCache:
+// parse+validate+plan are skipped entirely on a cache hit. schema must
+// be a stable pointer (the cache invalidates entries when it changes).
+// planCache may be nil for an uncached (but still planned) request.
+// Extension parse/validation hooks do not run on this path.
+func DoPlannedWithPool(p Params, schema *Schema, planCache *PlanCache, resultPool ResultPool) *Result {
+	planResult := planCache.Get(schema, p.RequestString, p.OperationName)
+	if len(planResult.Errors) > 0 {
+		result := resultPool.Get()
+		result.Request = planResult.Doc
+		result.Errors = planResult.Errors
+		return result
+	}
+	args := mergeSynthArgs(p.VariableValues, planResult.SynthArgs)
+	return ExecutePlanWithPool(planResult.Plan, ExecuteParams{
+		Schema:        *schema,
+		Root:          p.RootObject,
+		AST:           planResult.Doc,
+		OperationName: p.OperationName,
+		Args:          args,
+		Context:       p.Context,
+	}, resultPool)
+}
+
 func DoWithPool(p Params, resultPool ResultPool) *Result {
 	source := source.NewSource(&source.Source{
 		Body: []byte(p.RequestString),

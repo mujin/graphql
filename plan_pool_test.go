@@ -33,6 +33,48 @@ func (pool *countingResultPool) GetListFor(result *graphql.Result, capacity int)
 	return pool.SimpleResultPool.GetListFor(result, capacity)
 }
 
+func TestDoPlannedWithPool(t *testing.T) {
+	schema := benchutil.WideArgedSchemaWithXFieldsAndYItems(3, 2)
+	cache := graphql.NewPlanCache(graphql.PlanCacheOptions{})
+	pool := &countingResultPool{}
+
+	params := graphql.Params{
+		Schema:        schema,
+		RequestString: `{ wide { a(value: "x") } }`,
+	}
+	for callIndex := 0; callIndex < 2; callIndex++ {
+		result := graphql.DoPlannedWithPool(params, &schema, cache, pool)
+		if len(result.Errors) > 0 {
+			t.Fatalf("call %d: %v", callIndex, result.Errors)
+		}
+		if result.Data == nil {
+			t.Fatalf("call %d: expected data", callIndex)
+		}
+		if result.Request == nil {
+			t.Fatalf("call %d: expected Request to be set for access logging", callIndex)
+		}
+	}
+	hits, misses := cache.HitsMisses()
+	if hits != 1 || misses != 1 {
+		t.Fatalf("expected 1 hit and 1 miss, got hits=%d misses=%d", hits, misses)
+	}
+	if pool.gets == 0 || pool.objects == 0 {
+		t.Fatalf("expected pooled allocations, got gets=%d objects=%d", pool.gets, pool.objects)
+	}
+
+	// Validation errors surface with the parsed request attached.
+	badResult := graphql.DoPlannedWithPool(graphql.Params{
+		Schema:        schema,
+		RequestString: `{ nosuchfield }`,
+	}, &schema, cache, pool)
+	if len(badResult.Errors) == 0 {
+		t.Fatal("expected validation errors")
+	}
+	if badResult.Request == nil {
+		t.Fatal("expected Request on validation failure")
+	}
+}
+
 func TestExecutePlanWithPool(t *testing.T) {
 	schema := benchutil.WideArgedSchemaWithXFieldsAndYItems(3, 2)
 
