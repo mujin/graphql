@@ -565,8 +565,16 @@ func planFragmentMatches(schema Schema, typeConditionAST *ast.Named, runtime *Ob
 // getFieldDef on the hot path. Per-field arguments come from the
 // argPlan: static (no variables) bypasses getArgumentValues entirely.
 func ExecutePlan(plan *Plan, p ExecuteParams) (result *Result) {
+	// by using SimpleResultPool here preserves the original interface and behavior
+	// uses do not need to call Put on the returned result
+	return ExecutePlanWithPool(plan, p, &SimpleResultPool{})
+}
+
+func ExecutePlanWithPool(plan *Plan, p ExecuteParams, resultPool ResultPool) (result *Result) {
 	if plan == nil {
-		return &Result{Errors: gqlerrors.FormatErrors(errors.New("graphql: ExecutePlan: plan is nil"))}
+		result = resultPool.Get()
+		result.Errors = gqlerrors.FormatErrors(errors.New("graphql: ExecutePlan: plan is nil"))
+		return result
 	}
 	ctx := p.Context
 	if ctx == nil {
@@ -575,7 +583,9 @@ func ExecutePlan(plan *Plan, p ExecuteParams) (result *Result) {
 
 	extErrs, executionFinishFn := handleExtensionsExecutionDidStart(&p)
 	if len(extErrs) != 0 {
-		return &Result{Errors: extErrs}
+		result = resultPool.Get()
+		result.Errors = extErrs
+		return result
 	}
 	defer func() {
 		extErrs := executionFinishFn(result)
@@ -587,7 +597,7 @@ func ExecutePlan(plan *Plan, p ExecuteParams) (result *Result) {
 
 	resultChannel := make(chan *Result, 2)
 	go func() {
-		out := &Result{}
+		out := resultPool.Get()
 		defer func() {
 			if err := recover(); err != nil {
 				if e, ok := err.(error); ok {
@@ -613,13 +623,15 @@ func ExecutePlan(plan *Plan, p ExecuteParams) (result *Result) {
 		}
 
 		eCtx := &executionContext{
-			Schema:         execSchema,
-			Fragments:      plan.fragments,
-			Root:           p.Root,
-			Operation:      plan.operation,
-			VariableValues: variableValues,
-			Context:        ctx,
-			plan:           plan,
+			Schema:          execSchema,
+			Fragments:       plan.fragments,
+			Root:            p.Root,
+			Operation:       plan.operation,
+			VariableValues:  variableValues,
+			Context:         ctx,
+			plan:            plan,
+			planResultPool:  resultPool,
+			planFinalResult: out,
 		}
 
 		data := executePlannedSelection(eCtx, plan.root, p.Root, plan.rootType, nil)
@@ -638,7 +650,7 @@ func ExecutePlan(plan *Plan, p ExecuteParams) (result *Result) {
 
 	select {
 	case <-ctx.Done():
-		r := &Result{}
+		r := resultPool.Get()
 		r.Errors = append(r.Errors, gqlerrors.FormatError(ctx.Err()))
 		return r
 	case r := <-resultChannel:
@@ -655,12 +667,12 @@ func ExecutePlan(plan *Plan, p ExecuteParams) (result *Result) {
 // so this walker is the same for both.
 func executePlannedSelection(eCtx *executionContext, sp *selectionPlan, source interface{}, parentType *Object, path *ResponsePath) map[string]interface{} {
 	if sp == nil {
-		return map[string]interface{}{}
+		return eCtx.planResultPool.GetObjectFor(eCtx.planFinalResult, 0)
 	}
 	if source == nil {
 		source = map[string]interface{}{}
 	}
-	finalResults := make(map[string]interface{}, len(sp.fields))
+	finalResults := eCtx.planResultPool.GetObjectFor(eCtx.planFinalResult, len(sp.fields))
 	for _, fp := range sp.fields {
 		if fp.skipPredicate != nil && !fp.skipPredicate(eCtx.VariableValues) {
 			continue
@@ -864,7 +876,7 @@ func completePlannedListValue(eCtx *executionContext, returnType *List, fp *fiel
 		panic(gqlerrors.FormatError(err))
 	}
 	itemType := returnType.OfType
-	completedResults := make([]interface{}, 0, resultVal.Len())
+	completedResults := eCtx.planResultPool.GetListFor(eCtx.planFinalResult, resultVal.Len())
 	for i := 0; i < resultVal.Len(); i++ {
 		val := resultVal.Index(i).Interface()
 		fieldPath := path.WithKey(i)

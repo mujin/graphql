@@ -155,6 +155,12 @@ type executionContext struct {
 	// plan is set on the ExecutePlan path; it lets abstract fields plan
 	// their concrete-type sub-selections lazily at execute time.
 	plan *Plan
+
+	// planResultPool and planFinalResult carry the ResultPool through the
+	// planned execution walk on the ExecutePlanWithPool path; the pooled
+	// runtime path threads them through parameters instead.
+	planResultPool  ResultPool
+	planFinalResult *Result
 }
 
 // Identifies one sub-field collection within a single execution.
