@@ -572,6 +572,9 @@ func ExecutePlan(plan *Plan, p ExecuteParams) (result *Result) {
 	return ExecutePlanWithPool(plan, p, &SimpleResultPool{})
 }
 
+// ExecutePlanWithPool is ExecutePlan allocating the Result and its
+// nested objects and lists through resultPool; callers must Put the
+// returned Result back once done with it.
 func ExecutePlanWithPool(plan *Plan, p ExecuteParams, resultPool ResultPool) (result *Result) {
 	if plan == nil {
 		result = resultPool.Get()
@@ -653,6 +656,14 @@ func ExecutePlanWithPool(plan *Plan, p ExecuteParams, resultPool ResultPool) (re
 
 	select {
 	case <-ctx.Done():
+		// The goroutine still owns its pooled Result and will send it
+		// exactly once; drain it back into the pool instead of
+		// abandoning it.
+		go func() {
+			if lateResult := <-resultChannel; lateResult != nil {
+				resultPool.Put(lateResult)
+			}
+		}()
 		r := resultPool.Get()
 		r.Request = plan.doc
 		r.Errors = append(r.Errors, gqlerrors.FormatError(ctx.Err()))
