@@ -64,13 +64,21 @@ func getArgumentValues(
 	argDefs []*Argument, argASTs []*ast.Argument,
 	variableValues map[string]interface{}) map[string]interface{} {
 
-	argASTMap := map[string]*ast.Argument{}
+	// only argument definitions put entries in the result, so a field declaring none can never
+	// produce values. this runs once per resolved field and most fields take no arguments, so
+	// returning early keeps two map allocations per field off the hot path. callers only read
+	// from the returned map, and reads on a nil map are well defined
+	if len(argDefs) == 0 {
+		return nil
+	}
+
+	argASTMap := make(map[string]*ast.Argument, len(argASTs))
 	for _, argAST := range argASTs {
 		if argAST.Name != nil {
 			argASTMap[argAST.Name.Value] = argAST
 		}
 	}
-	results := map[string]interface{}{}
+	results := make(map[string]interface{}, len(argDefs))
 	for _, argDef := range argDefs {
 		var (
 			tmp   interface{}
