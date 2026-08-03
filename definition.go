@@ -490,9 +490,6 @@ func defineInterfaces(ttype *Object, interfaces []*Interface) ([]*Interface, err
 					`function. There is no way to resolve this implementing type `+
 					`during execution.`, iface, ttype,
 			)
-			if err != nil {
-				return ifaces, err
-			}
 		}
 		ifaces = append(ifaces, iface)
 	}
@@ -589,6 +586,7 @@ type FieldResolveFn func(p ResolveParams) (interface{}, error)
 type ResolveInfo struct {
 	FieldName      string
 	FieldASTs      []*ast.Field
+	Path           *ResponsePath
 	ReturnType     Output
 	ParentType     Composite
 	Schema         Schema
@@ -1011,7 +1009,15 @@ func (gt *Enum) Serialize(value interface{}) interface{} {
 		}
 		rv = reflect.Indirect(rv)
 	}
-	if enumValue, ok := gt.getNameLookup()[rv.String()]; ok {
+	// Fast path: internal values that are the enum names themselves (the
+	// common Mujin schema shape); rv.String() also normalizes named string
+	// types that would miss the interface-keyed value lookup.
+	if rv.Kind() == reflect.String {
+		if enumValue, ok := gt.getNameLookup()[rv.String()]; ok {
+			return enumValue.Name
+		}
+	}
+	if enumValue, ok := gt.getValueLookup()[rv.Interface()]; ok {
 		return enumValue.Name
 	}
 	return nil
@@ -1329,4 +1335,25 @@ func assertValidName(name string) error {
 		NameRegExp.MatchString(name),
 		`Names must match /^[_a-zA-Z][_a-zA-Z0-9]*$/ but "%v" does not.`, name)
 
+}
+
+type ResponsePath struct {
+	Prev *ResponsePath
+	Key  interface{}
+}
+
+// WithKey returns a new responsePath containing the new key.
+func (p *ResponsePath) WithKey(key interface{}) *ResponsePath {
+	return &ResponsePath{
+		Prev: p,
+		Key:  key,
+	}
+}
+
+// AsArray returns an array of path keys.
+func (p *ResponsePath) AsArray() []interface{} {
+	if p == nil {
+		return nil
+	}
+	return append(p.Prev.AsArray(), p.Key)
 }
