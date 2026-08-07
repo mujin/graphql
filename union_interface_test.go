@@ -257,7 +257,7 @@ func TestUnionIntersectionTypes_ExecutesUsingUnionTypes(t *testing.T) {
 	if len(result.Errors) != len(expected.Errors) {
 		t.Fatalf("Unexpected errors, Diff: %v", testutil.Diff(expected.Errors, result.Errors))
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -311,7 +311,7 @@ func TestUnionIntersectionTypes_ExecutesUnionTypesWithInlineFragments(t *testing
 	if len(result.Errors) != len(expected.Errors) {
 		t.Fatalf("Unexpected errors, Diff: %v", testutil.Diff(expected.Errors, result.Errors))
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -360,7 +360,7 @@ func TestUnionIntersectionTypes_ExecutesUsingInterfaceTypes(t *testing.T) {
 	if len(result.Errors) != len(expected.Errors) {
 		t.Fatalf("Unexpected errors, Diff: %v", testutil.Diff(expected.Errors, result.Errors))
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -413,7 +413,7 @@ func TestUnionIntersectionTypes_ExecutesInterfaceTypesWithInlineFragments(t *tes
 	if len(result.Errors) != len(expected.Errors) {
 		t.Fatalf("Unexpected errors, Diff: %v", testutil.Diff(expected.Errors, result.Errors))
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -493,7 +493,7 @@ func TestUnionIntersectionTypes_AllowsFragmentConditionsToBeAbstractTypes(t *tes
 	if len(result.Errors) != len(expected.Errors) {
 		t.Fatalf("Unexpected errors, Diff: %v", testutil.Diff(expected.Errors, result.Errors))
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -572,7 +572,7 @@ func TestUnionIntersectionTypes_GetsExecutionInfoInResolver(t *testing.T) {
 	}
 	result := testutil.TestExecute(t, ep)
 
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 	if !reflect.DeepEqual("contextStringValue123", encounteredContextValue) {
@@ -635,7 +635,7 @@ func TestUnionIntersectionTypes_ValueMayBeNilPointer(t *testing.T) {
 		Schema:        unionInterfaceTestSchema,
 		RequestString: query,
 	})
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }

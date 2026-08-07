@@ -153,7 +153,7 @@ func TestIsTypeOfUsedToResolveRuntimeTypeForInterface(t *testing.T) {
 	if len(result.Errors) != 0 {
 		t.Fatalf("wrong result, unexpected errors: %v", result.Errors)
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -290,7 +290,7 @@ func TestAppendTypeUsedToAddRuntimeCustomScalarTypeForInterface(t *testing.T) {
 	if len(result.Errors) != 0 {
 		t.Fatalf("wrong result, unexpected errors: %v", result.Errors)
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -390,7 +390,7 @@ func TestIsTypeOfUsedToResolveRuntimeTypeForUnion(t *testing.T) {
 	if len(result.Errors) != 0 {
 		t.Fatalf("wrong result, unexpected errors: %v", result.Errors)
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }

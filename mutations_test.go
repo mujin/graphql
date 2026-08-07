@@ -172,7 +172,7 @@ func TestMutations_ExecutionOrdering_EvaluatesMutationsSerially(t *testing.T) {
 	if len(result.Errors) != len(expected.Errors) {
 		t.Fatalf("Unexpected errors, Diff: %v", testutil.Diff(expected.Errors, result.Errors))
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -246,7 +246,7 @@ func TestMutations_EvaluatesMutationsCorrectlyInThePresenceOfAFailedMutation(t *
 		t.Fatalf("Unexpected errors, Diff: %v", testutil.Diff(expected.Errors, result.Errors))
 	}
 	t.Skipf("Testing equality for slice of errors in results")
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }

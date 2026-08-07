@@ -847,7 +847,7 @@ func TestLists_UserErrorExpectIterableButDidNotGetOne(t *testing.T) {
 		},
 		Errors: []gqlerrors.FormattedError{
 			{
-				Message: "User Error: expected iterable, but did not find one for field DataType.test.",
+				Message: "User Error: expected iterable, but did not find one for field DataType.test, received \"Not an iterable\".",
 				Locations: []location.SourceLocation{
 					{
 						Line:   1,
@@ -905,7 +905,7 @@ func TestLists_ValueMayBeNilPointer(t *testing.T) {
 		Schema:        listTestSchema,
 		RequestString: query,
 	})
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }

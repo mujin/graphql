@@ -496,6 +496,17 @@ func EqualFormattedErrors(expected, actual []gqlerrors.FormattedError) bool {
 	return true
 }
 
+// Returns a copy of the result without the parsed request document. Do and Subscribe attach it for callers that want
+// to log the request, and a hand-built expected result cannot carry one, so a whole-struct comparison drops it first.
+func WithoutRequest(result *graphql.Result) *graphql.Result {
+	if result == nil {
+		return nil
+	}
+	stripped := *result
+	stripped.Request = nil
+	return &stripped
+}
+
 func EqualResults(expected, result *graphql.Result) bool {
 	if !reflect.DeepEqual(expected.Data, result.Data) {
 		return false
