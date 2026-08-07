@@ -12,10 +12,12 @@ type ExtendedError interface {
 }
 
 type FormattedError struct {
-	Message       string                    `json:"message" yaml:"message" msgpack:"message"`
-	Locations     []location.SourceLocation `json:"locations" yaml:"locations" msgpack:"locations"`
-	Path          []interface{}             `json:"path,omitempty" yaml:"path,omitempty" msgpack:"path,omitempty"`
-	Extensions    map[string]interface{}    `json:"extensions,omitempty" yaml:"extensions,omitempty" msgpack:"extensions,omitempty"`
+	Message   string                    `json:"message" yaml:"message" msgpack:"message"`
+	Locations []location.SourceLocation `json:"locations" yaml:"locations" msgpack:"locations"`
+	// This fork does not populate Path. Upstream builds it while resolving, which 91a94a4 removed along with
+	// ResponsePath to cut allocations, so the field stays nil and is omitted from a serialized error.
+	Path          []interface{}          `json:"path,omitempty" yaml:"path,omitempty" msgpack:"path,omitempty"`
+	Extensions    map[string]interface{} `json:"extensions,omitempty" yaml:"extensions,omitempty" msgpack:"extensions,omitempty"`
 	originalError error
 }
 

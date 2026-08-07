@@ -1011,7 +1011,14 @@ func (gt *Enum) Serialize(value interface{}) interface{} {
 		}
 		rv = reflect.Indirect(rv)
 	}
-	if enumValue, ok := gt.getNameLookup()[rv.String()]; ok {
+	// Fast path: internal values that are the enum names themselves (the common Mujin schema shape). rv.String() also
+	// normalizes named string types that would miss the interface-keyed value lookup.
+	if rv.Kind() == reflect.String {
+		if enumValue, ok := gt.getNameLookup()[rv.String()]; ok {
+			return enumValue.Name
+		}
+	}
+	if enumValue, ok := gt.getValueLookup()[rv.Interface()]; ok {
 		return enumValue.Name
 	}
 	return nil

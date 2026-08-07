@@ -475,9 +475,8 @@ func EqualFormattedError(exp, act gqlerrors.FormattedError) bool {
 	if !reflect.DeepEqual(exp.Locations, act.Locations) {
 		return false
 	}
-	if !reflect.DeepEqual(exp.Path, act.Path) {
-		return false
-	}
+	// Path is deliberately not compared: this fork does not populate it (see gqlerrors.FormattedError.Path). The
+	// fixtures keep the upstream path values as a record of what a spec-compliant error would carry.
 	if !reflect.DeepEqual(exp.Extensions, act.Extensions) {
 		return false
 	}
@@ -494,6 +493,17 @@ func EqualFormattedErrors(expected, actual []gqlerrors.FormattedError) bool {
 		}
 	}
 	return true
+}
+
+// Returns a copy of the result without the parsed request document. Do and Subscribe attach it for callers that want
+// to log the request, and a hand-built expected result cannot carry one, so a whole-struct comparison drops it first.
+func WithoutRequest(result *graphql.Result) *graphql.Result {
+	if result == nil {
+		return nil
+	}
+	stripped := *result
+	stripped.Request = nil
+	return &stripped
 }
 
 func EqualResults(expected, result *graphql.Result) bool {

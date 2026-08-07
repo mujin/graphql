@@ -205,7 +205,7 @@ func TestExecutesArbitraryCode(t *testing.T) {
 	if len(result.Errors) > 0 {
 		t.Fatalf("wrong result, unexpected errors: %v", result.Errors)
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -292,7 +292,7 @@ func TestMergesParallelFragments(t *testing.T) {
 	if len(result.Errors) > 0 {
 		t.Fatalf("wrong result, unexpected errors: %v", result.Errors)
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -507,7 +507,7 @@ func TestThreadsRootValueContextCorrectly(t *testing.T) {
 			"a": "stringValue",
 		},
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -554,7 +554,7 @@ func TestThreadsContextCorrectly(t *testing.T) {
 			"a": "bar",
 		},
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -667,7 +667,7 @@ func TestUsesTheInlineOperationIfNoOperationNameIsProvided(t *testing.T) {
 	if len(result.Errors) > 0 {
 		t.Fatalf("wrong result, unexpected errors: %v", result.Errors)
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -712,7 +712,7 @@ func TestUsesTheOnlyOperationIfNoOperationNameIsProvided(t *testing.T) {
 	if len(result.Errors) > 0 {
 		t.Fatalf("wrong result, unexpected errors: %v", result.Errors)
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -757,7 +757,7 @@ func TestUsesTheNamedOperationIfOperationNameIsProvided(t *testing.T) {
 	if len(result.Errors) > 0 {
 		t.Fatalf("wrong result, unexpected errors: %v", result.Errors)
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -1008,7 +1008,7 @@ func TestUsesTheQuerySchemaForQueries(t *testing.T) {
 	if len(result.Errors) > 0 {
 		t.Fatalf("wrong result, unexpected errors: %v", result.Errors)
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -1063,7 +1063,7 @@ func TestUsesTheMutationSchemaForMutations(t *testing.T) {
 	if len(result.Errors) > 0 {
 		t.Fatalf("wrong result, unexpected errors: %v", result.Errors)
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -1118,7 +1118,7 @@ func TestUsesTheSubscriptionSchemaForSubscriptions(t *testing.T) {
 	if len(result.Errors) > 0 {
 		t.Fatalf("wrong result, unexpected errors: %v", result.Errors)
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -1191,7 +1191,7 @@ func TestCorrectFieldOrderingDespiteExecutionOrder(t *testing.T) {
 	if len(result.Errors) > 0 {
 		t.Fatalf("wrong result, unexpected errors: %v", result.Errors)
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 
@@ -1258,7 +1258,7 @@ func TestAvoidsRecursion(t *testing.T) {
 	if len(result.Errors) > 0 {
 		t.Fatalf("wrong result, unexpected errors: %v", result.Errors)
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 
@@ -1308,7 +1308,7 @@ func TestDoesNotIncludeIllegalFieldsInOutput(t *testing.T) {
 	if len(result.Errors) != 0 {
 		t.Fatalf("wrong result, expected len(%v) errors, got len(%v)", len(expected.Errors), len(result.Errors))
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -1370,7 +1370,7 @@ func TestDoesNotIncludeArgumentsThatWereNotSet(t *testing.T) {
 	if len(result.Errors) > 0 {
 		t.Fatalf("wrong result, unexpected errors: %v", result.Errors)
 	}
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -2227,6 +2227,9 @@ func testErrors(t *testing.T, nameType graphql.Output, extensions map[string]int
 }
 
 // http://facebook.github.io/graphql/June2018/#example-bc485
+//
+// The spec example carries a "path" on the error. This fork does not populate it (see
+// gqlerrors.FormattedError.Path), so the expected JSON here omits it.
 func TestQuery_ErrorPath(t *testing.T) {
 	result := testErrors(t, graphql.String, nil, nil)
 
@@ -2234,8 +2237,7 @@ func TestQuery_ErrorPath(t *testing.T) {
 	  "errors": [
 		{
 		  "message": "Name for character with ID 1002 could not be fetched.",
-		  "locations": [ { "line": 6, "column": 7 } ],
-		  "path": [ "hero", "heroFriends", 1, "name" ]
+		  "locations": [ { "line": 6, "column": 7 } ]
 		}
 	  ],
 	  "data": {
@@ -2268,8 +2270,7 @@ func TestQuery_ErrorPathForNonNullField(t *testing.T) {
 	  "errors": [
 		{
 		  "message": "Name for character with ID 1002 could not be fetched.",
-		  "locations": [ { "line": 6, "column": 7 } ],
-		  "path": [ "hero", "heroFriends", 1, "name" ]
+		  "locations": [ { "line": 6, "column": 7 } ]
 		}
 	  ],
 	  "data": {
@@ -2303,7 +2304,6 @@ func TestQuery_ErrorExtensions(t *testing.T) {
 		{
 		  "message": "Name for character with ID 1002 could not be fetched.",
 		  "locations": [ { "line": 6, "column": 7 } ],
-		  "path": [ "hero", "heroFriends", 1, "name" ],
 		  "extensions": {
 			  "code": "CAN_NOT_FETCH_BY_ID",
 			  "timestamp": "Fri Feb 9 14:33:09 UTC 2018"
