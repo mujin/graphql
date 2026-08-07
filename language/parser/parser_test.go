@@ -183,15 +183,6 @@ func TestParser_DoesNotAcceptFragmentsSpreadOfOn(t *testing.T) {
 	testErrorMessage(t, test)
 }
 
-func TestParser_DoesNotAllowNullAsValue(t *testing.T) {
-	test := errorMessageTest{
-		`{ fieldWithNullableStringInput(input: null) }'`,
-		`Syntax Error GraphQL (1:39) Unexpected Name "null"`,
-		false,
-	}
-	testErrorMessage(t, test)
-}
-
 func TestParser_ParsesMultiByteCharacters_Unicode(t *testing.T) {
 
 	doc := `

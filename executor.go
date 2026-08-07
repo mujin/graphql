@@ -750,8 +750,11 @@ func completeValueCatchingError(eCtx *executionContext, returnType Type, fieldAS
 
 func completeValue(eCtx *executionContext, returnType Type, fieldASTs []*ast.Field, info *ResolveInfo, result interface{}, finalResult *Result, resultPool ResultPool) interface{} {
 	if result != nil && reflect.TypeOf(result).Kind() == reflect.Func {
+		// info is pooled and reset once resolveField returns, which happens before this thunk runs, so the thunk needs
+		// its own copy. Sharing it leaves the deferred completion reading a zeroed or already-reused ResolveInfo.
+		thunkInfo := *info
 		return func() interface{} {
-			return completeThunkValueCatchingError(eCtx, returnType, fieldASTs, info, result, finalResult, resultPool)
+			return completeThunkValueCatchingError(eCtx, returnType, fieldASTs, &thunkInfo, result, finalResult, resultPool)
 		}
 	}
 

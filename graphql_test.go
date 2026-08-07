@@ -109,7 +109,7 @@ func testGraphql(test T, p graphql.Params, t *testing.T) {
 	if len(result.Errors) > 0 {
 		t.Fatalf("wrong result, unexpected errors: %v", result.Errors)
 	}
-	if !reflect.DeepEqual(result, test.Expected) {
+	if !reflect.DeepEqual(testutil.WithoutRequest(result), test.Expected) {
 		t.Fatalf("wrong result, query: %v, graphql result diff: %v", test.Query, testutil.Diff(test.Expected, result))
 	}
 }

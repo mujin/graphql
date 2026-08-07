@@ -144,7 +144,7 @@ func TestTypeSystem_EnumValues_AcceptsEnumLiteralsAsInput(t *testing.T) {
 		},
 	}
 	result := executeEnumTypeTest(t, query)
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -157,7 +157,7 @@ func TestTypeSystem_EnumValues_EnumMayBeOutputType(t *testing.T) {
 		},
 	}
 	result := executeEnumTypeTest(t, query)
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -169,7 +169,7 @@ func TestTypeSystem_EnumValues_EnumMayBeBothInputAndOutputType(t *testing.T) {
 		},
 	}
 	result := executeEnumTypeTest(t, query)
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -191,15 +191,19 @@ func TestTypeSystem_EnumValues_DoesNotAcceptStringLiterals(t *testing.T) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
-func TestTypeSystem_EnumValues_DoesNotAcceptIncorrectInternalValue(t *testing.T) {
+
+// Upstream returns null when an internal value is not one of the enum's values. This fork also accepts a value's name,
+// because Mujin schemas define enums whose internal value is the name itself, and a named string type would otherwise
+// miss the interface-keyed value lookup. So the name reaching Serialize here is serialized rather than nulled.
+func TestTypeSystem_EnumValues_SerializesAValueNameAsAnInternalValue(t *testing.T) {
 	query := `{ colorEnum(fromString: "GREEN") }`
 	expected := &graphql.Result{
 		Data: map[string]interface{}{
-			"colorEnum": nil,
+			"colorEnum": "GREEN",
 		},
 	}
 	result := executeEnumTypeTest(t, query)
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -252,7 +256,7 @@ func TestTypeSystem_EnumValues_AcceptsJSONStringAsEnumVariable(t *testing.T) {
 		},
 	}
 	result := executeEnumTypeTestWithParams(t, query, params)
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -268,7 +272,7 @@ func TestTypeSystem_EnumValues_AcceptsEnumLiteralsAsInputArgumentsToMutations(t 
 		},
 	}
 	result := executeEnumTypeTestWithParams(t, query, params)
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -284,7 +288,7 @@ func TestTypeSystem_EnumValues_AcceptsEnumLiteralsAsInputArgumentsToSubscription
 		},
 	}
 	result := executeEnumTypeTestWithParams(t, query, params)
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -357,7 +361,7 @@ func TestTypeSystem_EnumValues_EnumValueMayHaveAnInternalValueOfZero(t *testing.
 		},
 	}
 	result := executeEnumTypeTest(t, query)
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -373,7 +377,7 @@ func TestTypeSystem_EnumValues_EnumValueMayBeNullable(t *testing.T) {
 		},
 	}
 	result := executeEnumTypeTest(t, query)
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -417,7 +421,7 @@ func TestTypeSystem_EnumValues_EnumValueMayBePointer(t *testing.T) {
 		Schema:        enumTypeTestSchema,
 		RequestString: query,
 	})
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
@@ -456,7 +460,7 @@ func TestTypeSystem_EnumValues_EnumValueMayBeNilPointer(t *testing.T) {
 		Schema:        enumTypeTestSchema,
 		RequestString: query,
 	})
-	if !reflect.DeepEqual(expected, result) {
+	if !reflect.DeepEqual(expected, testutil.WithoutRequest(result)) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }

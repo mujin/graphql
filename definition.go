@@ -1019,9 +1019,8 @@ func (gt *Enum) Serialize(value interface{}) interface{} {
 		}
 		rv = reflect.Indirect(rv)
 	}
-	// Fast path: internal values that are the enum names themselves (the
-	// common Mujin schema shape); rv.String() also normalizes named string
-	// types that would miss the interface-keyed value lookup.
+	// Fast path: internal values that are the enum names themselves (the common Mujin schema shape). rv.String() also
+	// normalizes named string types that would miss the interface-keyed value lookup.
 	if rv.Kind() == reflect.String {
 		if enumValue, ok := gt.nameLookup[rv.String()]; ok {
 			return enumValue.Name
@@ -1068,6 +1067,7 @@ func (gt *Enum) String() string {
 func (gt *Enum) Error() error {
 	return gt.err
 }
+
 // InputObject Type Definition
 //
 // An input object defines a structured collection of fields which may be
