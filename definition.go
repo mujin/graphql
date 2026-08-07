@@ -961,6 +961,16 @@ func NewEnum(config EnumConfig) *Enum {
 		return gt
 	}
 
+	// Built here rather than on first lookup: an Enum is shared by every
+	// in-flight request through the schema, and validating or executing two
+	// requests at once would otherwise fill these maps concurrently.
+	gt.valuesLookup = make(map[interface{}]*EnumValueDefinition, len(gt.values))
+	gt.nameLookup = make(map[string]*EnumValueDefinition, len(gt.values))
+	for _, value := range gt.values {
+		gt.valuesLookup[value.Value] = value
+		gt.nameLookup[value.Name] = value
+	}
+
 	return gt
 }
 func (gt *Enum) defineEnumValues(valueMap EnumValueConfigMap) ([]*EnumValueDefinition, error) {
@@ -1013,11 +1023,11 @@ func (gt *Enum) Serialize(value interface{}) interface{} {
 	// common Mujin schema shape); rv.String() also normalizes named string
 	// types that would miss the interface-keyed value lookup.
 	if rv.Kind() == reflect.String {
-		if enumValue, ok := gt.getNameLookup()[rv.String()]; ok {
+		if enumValue, ok := gt.nameLookup[rv.String()]; ok {
 			return enumValue.Name
 		}
 	}
-	if enumValue, ok := gt.getValueLookup()[rv.Interface()]; ok {
+	if enumValue, ok := gt.valuesLookup[rv.Interface()]; ok {
 		return enumValue.Name
 	}
 	return nil
@@ -1033,14 +1043,14 @@ func (gt *Enum) ParseValue(value interface{}) interface{} {
 	default:
 		return nil
 	}
-	if enumValue, ok := gt.getNameLookup()[v]; ok {
+	if enumValue, ok := gt.nameLookup[v]; ok {
 		return enumValue.Value
 	}
 	return nil
 }
 func (gt *Enum) ParseLiteral(valueAST ast.Value) interface{} {
 	if valueAST, ok := valueAST.(*ast.EnumValue); ok {
-		if enumValue, ok := gt.getNameLookup()[valueAST.Value]; ok {
+		if enumValue, ok := gt.nameLookup[valueAST.Value]; ok {
 			return enumValue.Value
 		}
 	}
@@ -1058,30 +1068,6 @@ func (gt *Enum) String() string {
 func (gt *Enum) Error() error {
 	return gt.err
 }
-func (gt *Enum) getValueLookup() map[interface{}]*EnumValueDefinition {
-	if len(gt.valuesLookup) > 0 {
-		return gt.valuesLookup
-	}
-	valuesLookup := map[interface{}]*EnumValueDefinition{}
-	for _, value := range gt.Values() {
-		valuesLookup[value.Value] = value
-	}
-	gt.valuesLookup = valuesLookup
-	return gt.valuesLookup
-}
-
-func (gt *Enum) getNameLookup() map[string]*EnumValueDefinition {
-	if len(gt.nameLookup) > 0 {
-		return gt.nameLookup
-	}
-	nameLookup := map[string]*EnumValueDefinition{}
-	for _, value := range gt.Values() {
-		nameLookup[value.Name] = value
-	}
-	gt.nameLookup = nameLookup
-	return gt.nameLookup
-}
-
 // InputObject Type Definition
 //
 // An input object defines a structured collection of fields which may be
