@@ -191,11 +191,15 @@ func TestTypeSystem_EnumValues_DoesNotAcceptStringLiterals(t *testing.T) {
 		t.Fatalf("Unexpected result, Diff: %v", testutil.Diff(expected, result))
 	}
 }
-func TestTypeSystem_EnumValues_DoesNotAcceptIncorrectInternalValue(t *testing.T) {
+
+// Upstream returns null when an internal value is not one of the enum's values. This fork also accepts a value's name,
+// because Mujin schemas define enums whose internal value is the name itself, and a named string type would otherwise
+// miss the interface-keyed value lookup. So the name reaching Serialize here is serialized rather than nulled.
+func TestTypeSystem_EnumValues_SerializesAValueNameAsAnInternalValue(t *testing.T) {
 	query := `{ colorEnum(fromString: "GREEN") }`
 	expected := &graphql.Result{
 		Data: map[string]interface{}{
-			"colorEnum": nil,
+			"colorEnum": "GREEN",
 		},
 	}
 	result := executeEnumTypeTest(t, query)
