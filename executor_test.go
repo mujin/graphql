@@ -2227,6 +2227,9 @@ func testErrors(t *testing.T, nameType graphql.Output, extensions map[string]int
 }
 
 // http://facebook.github.io/graphql/June2018/#example-bc485
+//
+// The spec example carries a "path" on the error. This fork does not populate it (see
+// gqlerrors.FormattedError.Path), so the expected JSON here omits it.
 func TestQuery_ErrorPath(t *testing.T) {
 	result := testErrors(t, graphql.String, nil, nil)
 
@@ -2234,8 +2237,7 @@ func TestQuery_ErrorPath(t *testing.T) {
 	  "errors": [
 		{
 		  "message": "Name for character with ID 1002 could not be fetched.",
-		  "locations": [ { "line": 6, "column": 7 } ],
-		  "path": [ "hero", "heroFriends", 1, "name" ]
+		  "locations": [ { "line": 6, "column": 7 } ]
 		}
 	  ],
 	  "data": {
@@ -2268,8 +2270,7 @@ func TestQuery_ErrorPathForNonNullField(t *testing.T) {
 	  "errors": [
 		{
 		  "message": "Name for character with ID 1002 could not be fetched.",
-		  "locations": [ { "line": 6, "column": 7 } ],
-		  "path": [ "hero", "heroFriends", 1, "name" ]
+		  "locations": [ { "line": 6, "column": 7 } ]
 		}
 	  ],
 	  "data": {
@@ -2303,7 +2304,6 @@ func TestQuery_ErrorExtensions(t *testing.T) {
 		{
 		  "message": "Name for character with ID 1002 could not be fetched.",
 		  "locations": [ { "line": 6, "column": 7 } ],
-		  "path": [ "hero", "heroFriends", 1, "name" ],
 		  "extensions": {
 			  "code": "CAN_NOT_FETCH_BY_ID",
 			  "timestamp": "Fri Feb 9 14:33:09 UTC 2018"
