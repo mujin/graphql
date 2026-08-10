@@ -1,6 +1,7 @@
 package graphql_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -229,6 +230,54 @@ func TestSchemaSubscribe(t *testing.T) {
 			},
 		},
 	})
+}
+
+func TestSubscribePlannedWithPool(t *testing.T) {
+	schema := makeSubscriptionSchema(t, graphql.ObjectConfig{
+		Name: "Subscription",
+		Fields: graphql.Fields{
+			"sub": &graphql.Field{
+				Type:      graphql.String,
+				Subscribe: makeSubscribeToStringFunction([]string{"a", "b", "c"}),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return p.Source, nil
+				},
+			},
+		},
+	})
+	cache := graphql.NewPlanCache(graphql.PlanCacheOptions{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	channel := graphql.SubscribePlannedWithPool(graphql.Params{
+		RequestString: `subscription { sub }`,
+		Context:       ctx,
+	}, &schema, cache, &graphql.SimpleResultPool{})
+
+	var received []string
+	for result := range channel {
+		if len(result.Errors) > 0 {
+			t.Fatalf("unexpected errors: %v", result.Errors)
+		}
+		if result.Request == nil {
+			t.Fatal("expected Request to be set on subscription results")
+		}
+		data, ok := result.Data.(map[string]interface{})
+		if !ok {
+			t.Fatalf("unexpected data shape: %T", result.Data)
+		}
+		received = append(received, fmt.Sprintf("%v", data["sub"]))
+		if len(received) == 3 {
+			cancel()
+			break
+		}
+	}
+	if fmt.Sprintf("%v", received) != "[a b c]" {
+		t.Fatalf("unexpected events: %v", received)
+	}
+	if _, misses := cache.HitsMisses(); misses != 1 {
+		t.Fatalf("expected one plan-cache miss, got %d", misses)
+	}
 }
 
 func makeSubscribeToStringFunction(elements []string) func(p graphql.ResolveParams) (interface{}, error) {

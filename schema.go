@@ -122,6 +122,7 @@ func NewSchema(config SchemaConfig) (Schema, error) {
 			}
 		}
 	}
+	schema.buildPossibleTypeMap()
 
 	// Enforce correct interface implementations
 	for _, ttype := range schema.typeMap {
@@ -163,6 +164,7 @@ func (gq *Schema) AddImplementation() error {
 			}
 		}
 	}
+	gq.buildPossibleTypeMap()
 
 	// Enforce correct interface implementations
 	for _, ttype := range gq.typeMap {
@@ -238,26 +240,33 @@ func (gq *Schema) PossibleTypes(abstractType Abstract) []*Object {
 	}
 	return []*Object{}
 }
+// Every abstract type reaching this comes from the schema's own type map, so buildPossibleTypeMap has already covered
+// it. Filling the map here instead would race, since one schema serves every in-flight request.
 func (gq *Schema) IsPossibleType(abstractType Abstract, possibleType *Object) bool {
-	possibleTypeMap := gq.possibleTypeMap
-	if possibleTypeMap == nil {
-		possibleTypeMap = map[string]map[string]bool{}
-	}
+	return gq.possibleTypeMap[abstractType.Name()][possibleType.Name()]
+}
 
-	if typeMap, ok := possibleTypeMap[abstractType.Name()]; !ok {
-		typeMap = map[string]bool{}
-		for _, possibleType := range gq.PossibleTypes(abstractType) {
-			typeMap[possibleType.Name()] = true
+// Records which objects satisfy each interface and union in the type map. Must be called whenever implementations
+// changes, and before anything validates or executes against the schema.
+func (gq *Schema) buildPossibleTypeMap() {
+	possibleTypeMap := make(map[string]map[string]bool, len(gq.implementations))
+	for _, ttype := range gq.typeMap {
+		var abstractType Abstract
+		switch ttype := ttype.(type) {
+		case *Interface:
+			abstractType = ttype
+		case *Union:
+			abstractType = ttype
+		default:
+			continue
 		}
-		possibleTypeMap[abstractType.Name()] = typeMap
+		possibleTypeNames := map[string]bool{}
+		for _, possibleType := range gq.PossibleTypes(abstractType) {
+			possibleTypeNames[possibleType.Name()] = true
+		}
+		possibleTypeMap[abstractType.Name()] = possibleTypeNames
 	}
-
 	gq.possibleTypeMap = possibleTypeMap
-	if typeMap, ok := possibleTypeMap[abstractType.Name()]; ok {
-		isPossible, _ := typeMap[possibleType.Name()]
-		return isPossible
-	}
-	return false
 }
 
 // AddExtensions can be used to add additional extensions to the schema

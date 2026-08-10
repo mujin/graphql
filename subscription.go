@@ -2,6 +2,7 @@ package graphql
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 
@@ -70,6 +71,46 @@ func SubscribeWithPool(p Params, resultPool ResultPool) chan *Result {
 	}, resultPool)
 }
 
+// SubscribePlannedWithPool is SubscribeWithPool routed through a
+// PlanCache: parse+validate+plan are skipped entirely on a cache hit,
+// and every event executes through the plan. planCache may be nil for
+// an uncached (but still planned) subscription.
+func SubscribePlannedWithPool(p Params, schema *Schema, planCache *PlanCache, resultPool ResultPool) chan *Result {
+	p.Schema = *schema
+	planResult := planCache.Get(schema, p.RequestString, p.OperationName)
+	if len(planResult.Errors) > 0 {
+		result := resultPool.Get()
+		result.Errors = planResult.Errors
+		return sendOneResultAndClose(injectRequest(planResult.Doc, result))
+	}
+	args := mergeSynthArgs(p.VariableValues, planResult.SynthArgs)
+	return ExecuteSubscriptionPlanWithPool(planResult.Plan, ExecuteParams{
+		Schema:        p.Schema,
+		Root:          p.RootObject,
+		AST:           planResult.Doc,
+		OperationName: p.OperationName,
+		Args:          args,
+		Context:       p.Context,
+	}, resultPool)
+}
+
+// mergeSynthArgs merges the synthetic variables a normalizing
+// PlanCache extracted from literals into the caller's variables.
+// Caller variables win on collision.
+func mergeSynthArgs(variableValues, synthArgs map[string]interface{}) map[string]interface{} {
+	if len(synthArgs) == 0 {
+		return variableValues
+	}
+	merged := make(map[string]interface{}, len(variableValues)+len(synthArgs))
+	for name, value := range synthArgs {
+		merged[name] = value
+	}
+	for name, value := range variableValues {
+		merged[name] = value
+	}
+	return merged
+}
+
 func sendOneResultAndClose(res *Result) chan *Result {
 	resultChannel := make(chan *Result, 1)
 	resultChannel <- res
@@ -97,7 +138,7 @@ func ExecuteSubscriptionWithPool(p ExecuteParams, resultPool ResultPool) chan *R
 		p.Context = context.Background()
 	}
 
-	var mapSourceToResponse = func(payload interface{}) *Result {
+	return executeSubscriptionWithMapper(p, resultPool, func(payload interface{}) *Result {
 		return injectRequest(p.AST, ExecuteWithPool(ExecuteParams{
 			Schema:        p.Schema,
 			Root:          payload,
@@ -106,7 +147,40 @@ func ExecuteSubscriptionWithPool(p ExecuteParams, resultPool ResultPool) chan *R
 			Args:          p.Args,
 			Context:       p.Context,
 		}, resultPool))
+	})
+}
+
+// ExecuteSubscriptionPlanWithPool is the planned variant of
+// ExecuteSubscriptionWithPool: the subscription field is resolved once,
+// but every event is executed through the pre-built plan, skipping the
+// per-event field collection and schema walks.
+func ExecuteSubscriptionPlanWithPool(plan *Plan, p ExecuteParams, resultPool ResultPool) chan *Result {
+	if plan == nil {
+		result := resultPool.Get()
+		result.Errors = gqlerrors.FormatErrors(errors.New("graphql: ExecuteSubscriptionPlanWithPool: plan is nil"))
+		return sendOneResultAndClose(result)
 	}
+	if p.Context == nil {
+		p.Context = context.Background()
+	}
+	if p.AST == nil {
+		p.AST = plan.doc
+	}
+
+	return executeSubscriptionWithMapper(p, resultPool, func(payload interface{}) *Result {
+		// ExecutePlanWithPool sets Result.Request from the plan itself.
+		return ExecutePlanWithPool(plan, ExecuteParams{
+			Schema:        p.Schema,
+			Root:          payload,
+			AST:           p.AST,
+			OperationName: p.OperationName,
+			Args:          p.Args,
+			Context:       p.Context,
+		}, resultPool)
+	})
+}
+
+func executeSubscriptionWithMapper(p ExecuteParams, resultPool ResultPool, mapSourceToResponse func(payload interface{}) *Result) chan *Result {
 	var resultChannel = make(chan *Result)
 	go func() {
 		defer close(resultChannel)

@@ -51,6 +51,10 @@ type ExecuteParams struct {
 	Context context.Context
 }
 
+// Execute runs an operation against a schema. Callers that issue the
+// same query repeatedly should hold onto the *Plan returned by
+// PlanQuery and pass it to ExecutePlan / ExecutePlanWithPool to skip
+// the per-call parse-validate-plan work.
 func Execute(p ExecuteParams) (result *Result) {
 	// by using SimpleResultPool here preserves the original interface and behavior
 	// uses do not need to call Put on the returned result
@@ -147,6 +151,16 @@ type executionContext struct {
 	// memoizes the sub-field collection done by completeObjectValue, see collectSubFields.
 	// scoped to one execution because @skip and @include resolve against VariableValues
 	subFieldsCache map[subFieldsCacheKey]map[string][]*ast.Field
+
+	// plan is set on the ExecutePlan path; it lets abstract fields plan
+	// their concrete-type sub-selections lazily at execute time.
+	plan *Plan
+
+	// planResultPool and planFinalResult carry the ResultPool through the
+	// planned execution walk on the ExecutePlanWithPool path; the pooled
+	// runtime path threads them through parameters instead.
+	planResultPool  ResultPool
+	planFinalResult *Result
 }
 
 // Identifies one sub-field collection within a single execution.
@@ -571,7 +585,7 @@ func doesFragmentConditionMatch(eCtx *executionContext, fragment ast.Node, ttype
 			return true
 		}
 		conditionalType, err := typeFromAST(eCtx.Schema, typeConditionAST)
-		if err != nil {
+		if err != nil || conditionalType == nil {
 			return false
 		}
 		if conditionalType == ttype {
@@ -592,7 +606,7 @@ func doesFragmentConditionMatch(eCtx *executionContext, fragment ast.Node, ttype
 			return true
 		}
 		conditionalType, err := typeFromAST(eCtx.Schema, typeConditionAST)
-		if err != nil {
+		if err != nil || conditionalType == nil {
 			return false
 		}
 		if conditionalType == ttype {
@@ -629,8 +643,8 @@ type resolveFieldResultState struct {
 	hasNoFieldDefs bool
 }
 
-func handleFieldError(r interface{}, fieldNodes []ast.Node, returnType Output, eCtx *executionContext) {
-	err := NewLocatedError(r, fieldNodes)
+func handleFieldError(r interface{}, fieldNodes []ast.Node, path *ResponsePath, returnType Output, eCtx *executionContext) {
+	err := NewLocatedErrorWithPath(r, fieldNodes, path.AsArray())
 	// send panic upstream
 	if _, ok := returnType.(*NonNull); ok {
 		panic(err)
@@ -647,7 +661,7 @@ func resolveField(eCtx *executionContext, parentType *Object, source interface{}
 	var returnType Output
 	defer func() (interface{}, resolveFieldResultState) {
 		if r := recover(); r != nil {
-			handleFieldError(r, FieldASTsToNodeASTs(fieldASTs), returnType, eCtx)
+			handleFieldError(r, FieldASTsToNodeASTs(fieldASTs), nil, returnType, eCtx)
 			return result, resultState
 		}
 		return result, resultState
@@ -720,7 +734,7 @@ func completeValueCatchingError(eCtx *executionContext, returnType Type, fieldAS
 	// catch panic
 	defer func() interface{} {
 		if r := recover(); r != nil {
-			handleFieldError(r, FieldASTsToNodeASTs(fieldASTs), returnType, eCtx)
+			handleFieldError(r, FieldASTsToNodeASTs(fieldASTs), nil, returnType, eCtx)
 			return completed
 		}
 		return completed
@@ -801,7 +815,7 @@ func completeThunkValueCatchingError(eCtx *executionContext, returnType Type, fi
 	// catch any panic invoked from the propertyFn (thunk)
 	defer func() {
 		if r := recover(); r != nil {
-			handleFieldError(r, FieldASTsToNodeASTs(fieldASTs), returnType, eCtx)
+			handleFieldError(r, FieldASTsToNodeASTs(fieldASTs), nil, returnType, eCtx)
 		}
 	}()
 
@@ -1032,9 +1046,6 @@ func DefaultResolveFn(p ResolveParams) (interface{}, error) {
 			checkTag := func(tagName string) bool {
 				t := tag.Get(tagName)
 				tOptions := strings.Split(t, ",")
-				if len(tOptions) == 0 {
-					return false
-				}
 				if tOptions[0] != p.Info.FieldName {
 					return false
 				}
@@ -1109,7 +1120,6 @@ func getFieldDef(schema Schema, parentType *Object, fieldName string) *FieldDefi
 	}
 	return parentType.Fields()[fieldName]
 }
-
 // contains field information that will be placed in an ordered slice
 type orderedField struct {
 	responseName string
