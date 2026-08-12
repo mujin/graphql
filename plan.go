@@ -763,7 +763,7 @@ func resolvePlannedField(eCtx *executionContext, parentType *Object, source inte
 	var resolveFieldFinishFn resolveFieldFinishFuncHandler
 	if len(eCtx.Schema.extensions) > 0 {
 		var extErrs []gqlerrors.FormattedError
-		extErrs, resolveFieldFinishFn = handleExtensionsResolveFieldDidStart(eCtx.Schema.extensions, eCtx, &info)
+		info, extErrs, resolveFieldFinishFn = startFieldExtensions(eCtx, info)
 		if len(extErrs) != 0 {
 			eCtx.Errors = append(eCtx.Errors, extErrs...)
 		}
@@ -801,6 +801,18 @@ func completePlannedValueCatchingError(eCtx *executionContext, returnType Type, 
 		return completePlannedValue(eCtx, rt, fp, info, path, result)
 	}
 	return completePlannedValue(eCtx, returnType, fp, info, path, result)
+}
+
+// Notifies the extensions in its own frame, taking ResolveInfo by value so the
+// address is only taken here. Escape analysis is not path sensitive, so an
+// &info in resolvePlannedField would move that struct to the heap on every
+// field, not just on the schemas that register extensions. The possibly updated
+// copy is returned so a mutation an extension makes still reaches the resolver.
+//
+//go:noinline
+func startFieldExtensions(eCtx *executionContext, info ResolveInfo) (ResolveInfo, []gqlerrors.FormattedError, resolveFieldFinishFuncHandler) {
+	errs, finishFn := handleExtensionsResolveFieldDidStart(eCtx.Schema.extensions, eCtx, &info)
+	return info, errs, finishFn
 }
 
 // Builds the thunk closure in its own frame. Keeping the closure out of
