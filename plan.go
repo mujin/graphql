@@ -803,12 +803,21 @@ func completePlannedValueCatchingError(eCtx *executionContext, returnType Type, 
 	return completePlannedValue(eCtx, returnType, fp, info, path, result)
 }
 
+// Builds the thunk closure in its own frame. Keeping the closure out of
+// completePlannedValue stops the compiler moving that function's by-value
+// ResolveInfo to the heap on every call, for a branch most fields never take.
+//
+//go:noinline
+func makePlannedThunk(eCtx *executionContext, returnType Type, fp *fieldPlan, info ResolveInfo, path *ResponsePath, result interface{}) func() interface{} {
+	return func() interface{} {
+		return completePlannedThunkValueCatchingError(eCtx, returnType, fp, info, path, result)
+	}
+}
+
 func completePlannedValue(eCtx *executionContext, returnType Type, fp *fieldPlan, info ResolveInfo, path *ResponsePath, result interface{}) interface{} {
 	resultVal := reflect.ValueOf(result)
 	if resultVal.IsValid() && resultVal.Kind() == reflect.Func {
-		return func() interface{} {
-			return completePlannedThunkValueCatchingError(eCtx, returnType, fp, info, path, result)
-		}
+		return makePlannedThunk(eCtx, returnType, fp, info, path, result)
 	}
 	if rt, ok := returnType.(*NonNull); ok {
 		completed := completePlannedValue(eCtx, rt.OfType, fp, info, path, result)
