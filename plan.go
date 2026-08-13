@@ -94,6 +94,14 @@ type argPlan struct {
 	// goal is for the common literal-args case to skip it.
 	hasVariables bool
 
+	// hasArgDefs records whether the field declares any arguments at all,
+	// which decides what an empty result looks like. getArgumentValues
+	// returns nil for a field declaring none and a non-nil empty map for a
+	// field whose declared arguments all resolved to nothing, so the executor
+	// needs to tell those apart to hand resolvers what the unplanned path
+	// would have.
+	hasArgDefs bool
+
 	// fieldDefArgs / argASTs are kept for the dynamic fallback path;
 	// nil when hasVariables is false.
 	fieldDefArgs []*Argument
@@ -426,7 +434,7 @@ func planArguments(argDefs []*Argument, argASTs []*ast.Argument) argPlan {
 	// no variable refs.
 	static := getArgumentValues(argDefs, argASTs, nil)
 	if len(static) == 0 {
-		return argPlan{}
+		return argPlan{hasArgDefs: len(argDefs) > 0}
 	}
 	return argPlan{static: static}
 }
@@ -726,9 +734,11 @@ func resolvePlannedField(eCtx *executionContext, parentType *Object, source inte
 		resolveFn = DefaultResolveFn
 	}
 
-	// Resolvers expect a non-nil Args map (the existing resolveField
-	// path always passes the result of getArgumentValues, which is
-	// never nil even when empty). Match that contract.
+	// Hand resolvers what getArgumentValues would have on the unplanned path:
+	// nil for a field declaring no arguments, and a non-nil empty map for a
+	// field whose declared arguments all resolved to nothing. Nearly every
+	// field declares none, so allocating an empty map here cost a map header
+	// per resolved field for no one's benefit.
 	var args map[string]interface{}
 	switch {
 	case fp.args.hasVariables:
@@ -740,7 +750,7 @@ func resolvePlannedField(eCtx *executionContext, parentType *Object, source inte
 		for k, v := range fp.args.static {
 			args[k] = v
 		}
-	default:
+	case fp.args.hasArgDefs:
 		args = map[string]interface{}{}
 	}
 
