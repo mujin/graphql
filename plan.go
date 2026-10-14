@@ -907,6 +907,11 @@ func completePlannedListValue(eCtx *executionContext, returnType *List, fp *fiel
 	resultVal := reflect.ValueOf(result)
 	if resultVal.Kind() == reflect.Ptr {
 		resultVal = resultVal.Elem()
+		if resultVal.IsValid() {
+			// copy the slice header, so the length stays the one the field resolved to even when the
+			// source is changed meanwhile, and appends stay within the capacity taken from the pool
+			resultVal = reflect.ValueOf(resultVal.Interface())
+		}
 	}
 	parentTypeName := ""
 	if info.ParentType != nil {
