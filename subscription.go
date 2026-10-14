@@ -76,6 +76,21 @@ func SubscribeWithPool(p Params, resultPool ResultPool) chan *Result {
 // and every event executes through the plan. planCache may be nil for
 // an uncached (but still planned) subscription.
 func SubscribePlannedWithPool(p Params, schema *Schema, planCache *PlanCache, resultPool ResultPool) chan *Result {
+	return SubscribePlannedWithMapper(p, schema, planCache, resultPool, nil)
+}
+
+// SubscriptionMapper turns one subscription payload into the result sent
+// to the subscriber. execute runs the subscription's plan for a payload,
+// allocating the result from the given pool. A mapper may return a result
+// it did not execute, for example one shared between subscriptions that
+// select the same fields from the same payload. Such a result must not be
+// returned to a pool by the caller while others still read it.
+type SubscriptionMapper func(payload interface{}, execute func(payload interface{}, resultPool ResultPool) *Result) *Result
+
+// SubscribePlannedWithMapper is SubscribePlannedWithPool with every
+// payload passed through mapper. A nil mapper executes every payload with
+// resultPool, the same as SubscribePlannedWithPool.
+func SubscribePlannedWithMapper(p Params, schema *Schema, planCache *PlanCache, resultPool ResultPool, mapper SubscriptionMapper) chan *Result {
 	p.Schema = *schema
 	planResult := planCache.Get(schema, p.RequestString, p.OperationName)
 	if len(planResult.Errors) > 0 {
@@ -84,14 +99,14 @@ func SubscribePlannedWithPool(p Params, schema *Schema, planCache *PlanCache, re
 		return sendOneResultAndClose(injectRequest(planResult.Doc, result))
 	}
 	args := mergeSynthArgs(p.VariableValues, planResult.SynthArgs)
-	return ExecuteSubscriptionPlanWithPool(planResult.Plan, ExecuteParams{
+	return executeSubscriptionPlan(planResult.Plan, ExecuteParams{
 		Schema:        p.Schema,
 		Root:          p.RootObject,
 		AST:           planResult.Doc,
 		OperationName: p.OperationName,
 		Args:          args,
 		Context:       p.Context,
-	}, resultPool)
+	}, resultPool, mapper)
 }
 
 // mergeSynthArgs merges the synthetic variables a normalizing
@@ -155,6 +170,10 @@ func ExecuteSubscriptionWithPool(p ExecuteParams, resultPool ResultPool) chan *R
 // but every event is executed through the pre-built plan, skipping the
 // per-event field collection and schema walks.
 func ExecuteSubscriptionPlanWithPool(plan *Plan, p ExecuteParams, resultPool ResultPool) chan *Result {
+	return executeSubscriptionPlan(plan, p, resultPool, nil)
+}
+
+func executeSubscriptionPlan(plan *Plan, p ExecuteParams, resultPool ResultPool, mapper SubscriptionMapper) chan *Result {
 	if plan == nil {
 		result := resultPool.Get()
 		result.Errors = gqlerrors.FormatErrors(errors.New("graphql: ExecuteSubscriptionPlanWithPool: plan is nil"))
@@ -167,7 +186,7 @@ func ExecuteSubscriptionPlanWithPool(plan *Plan, p ExecuteParams, resultPool Res
 		p.AST = plan.doc
 	}
 
-	return executeSubscriptionWithMapper(p, resultPool, func(payload interface{}) *Result {
+	execute := func(payload interface{}, payloadResultPool ResultPool) *Result {
 		// ExecutePlanWithPool sets Result.Request from the plan itself.
 		return ExecutePlanWithPool(plan, ExecuteParams{
 			Schema:        p.Schema,
@@ -176,7 +195,13 @@ func ExecuteSubscriptionPlanWithPool(plan *Plan, p ExecuteParams, resultPool Res
 			OperationName: p.OperationName,
 			Args:          p.Args,
 			Context:       p.Context,
-		}, resultPool)
+		}, payloadResultPool)
+	}
+	return executeSubscriptionWithMapper(p, resultPool, func(payload interface{}) *Result {
+		if mapper == nil {
+			return execute(payload, resultPool)
+		}
+		return mapper(payload, execute)
 	})
 }
 

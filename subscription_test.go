@@ -280,6 +280,86 @@ func TestSubscribePlannedWithPool(t *testing.T) {
 	}
 }
 
+func TestSubscribePlannedWithMapper(t *testing.T) {
+	schema := makeSubscriptionSchema(t, graphql.ObjectConfig{
+		Name: "Subscription",
+		Fields: graphql.Fields{
+			"sub": &graphql.Field{
+				Type:      graphql.String,
+				Subscribe: makeSubscribeToStringFunction([]string{"a", "b", "c"}),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return p.Source, nil
+				},
+			},
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sharedResult := &graphql.Result{Data: map[string]interface{}{"sub": "shared"}}
+	var mappedPayloads []string
+	mapper := func(payload interface{}, execute func(payload interface{}, resultPool graphql.ResultPool) *graphql.Result) *graphql.Result {
+		mappedPayloads = append(mappedPayloads, fmt.Sprintf("%v", payload))
+		if payload == "b" {
+			// a mapper may hand out a result it did not execute, such as one shared with other subscriptions
+			return sharedResult
+		}
+		return execute(payload, &graphql.SimpleResultPool{})
+	}
+	channel := graphql.SubscribePlannedWithMapper(graphql.Params{
+		RequestString: `subscription { sub }`,
+		Context:       ctx,
+	}, &schema, graphql.NewPlanCache(graphql.PlanCacheOptions{}), &graphql.SimpleResultPool{}, mapper)
+
+	var received []string
+	for result := range channel {
+		if len(result.Errors) > 0 {
+			t.Fatalf("unexpected errors: %v", result.Errors)
+		}
+		if result == sharedResult {
+			received = append(received, "shared")
+		} else {
+			if result.Request == nil {
+				t.Fatal("expected Request to be set on executed results")
+			}
+			received = append(received, fmt.Sprintf("%v", result.Data.(map[string]interface{})["sub"]))
+		}
+		if len(received) == 3 {
+			cancel()
+			break
+		}
+	}
+	if fmt.Sprintf("%v", received) != "[a shared c]" {
+		t.Fatalf("unexpected events: %v", received)
+	}
+	if fmt.Sprintf("%v", mappedPayloads) != "[a b c]" {
+		t.Fatalf("expected the mapper to see every payload, got %v", mappedPayloads)
+	}
+}
+
+func TestSubscribePlannedWithMapperReportsPlanErrors(t *testing.T) {
+	schema := makeSubscriptionSchema(t, graphql.ObjectConfig{
+		Name: "Subscription",
+		Fields: graphql.Fields{
+			"sub": &graphql.Field{
+				Type:      graphql.String,
+				Subscribe: makeSubscribeToStringFunction([]string{"a"}),
+			},
+		},
+	})
+	channel := graphql.SubscribePlannedWithMapper(graphql.Params{
+		RequestString: `subscription { missing }`,
+		Context:       context.Background(),
+	}, &schema, graphql.NewPlanCache(graphql.PlanCacheOptions{}), &graphql.SimpleResultPool{}, func(payload interface{}, execute func(payload interface{}, resultPool graphql.ResultPool) *graphql.Result) *graphql.Result {
+		t.Error("expected the mapper not to run for an invalid subscription")
+		return nil
+	})
+	result := <-channel
+	if len(result.Errors) == 0 {
+		t.Fatal("expected a validation error")
+	}
+}
+
 func makeSubscribeToStringFunction(elements []string) func(p graphql.ResolveParams) (interface{}, error) {
 	return func(p graphql.ResolveParams) (interface{}, error) {
 		c := make(chan interface{})
