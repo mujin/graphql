@@ -797,11 +797,11 @@ func resolvePlannedField(eCtx *executionContext, parentType *Object, source inte
 		panic(resolveFnError)
 	}
 
-	completed := completePlannedValueCatchingError(eCtx, returnType, fp, info, path, result)
+	completed := completePlannedValueCatchingError(eCtx, returnType, fp, &info, path, result)
 	return completed, true
 }
 
-func completePlannedValueCatchingError(eCtx *executionContext, returnType Type, fp *fieldPlan, info ResolveInfo, path *ResponsePath, result interface{}) (completed interface{}) {
+func completePlannedValueCatchingError(eCtx *executionContext, returnType Type, fp *fieldPlan, info *ResolveInfo, path *ResponsePath, result interface{}) (completed interface{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			handleFieldError(r, FieldASTsToNodeASTs(fp.fieldASTs), path, returnType, eCtx)
@@ -832,14 +832,14 @@ func startFieldExtensions(eCtx *executionContext, info ResolveInfo) (ResolveInfo
 //go:noinline
 func makePlannedThunk(eCtx *executionContext, returnType Type, fp *fieldPlan, info ResolveInfo, path *ResponsePath, result interface{}) func() interface{} {
 	return func() interface{} {
-		return completePlannedThunkValueCatchingError(eCtx, returnType, fp, info, path, result)
+		return completePlannedThunkValueCatchingError(eCtx, returnType, fp, &info, path, result)
 	}
 }
 
-func completePlannedValue(eCtx *executionContext, returnType Type, fp *fieldPlan, info ResolveInfo, path *ResponsePath, result interface{}) interface{} {
+func completePlannedValue(eCtx *executionContext, returnType Type, fp *fieldPlan, info *ResolveInfo, path *ResponsePath, result interface{}) interface{} {
 	resultVal := reflect.ValueOf(result)
 	if resultVal.IsValid() && resultVal.Kind() == reflect.Func {
-		return makePlannedThunk(eCtx, returnType, fp, info, path, result)
+		return makePlannedThunk(eCtx, returnType, fp, *info, path, result)
 	}
 	if rt, ok := returnType.(*NonNull); ok {
 		completed := completePlannedValue(eCtx, rt.OfType, fp, info, path, result)
@@ -881,7 +881,7 @@ func completePlannedValue(eCtx *executionContext, returnType Type, fp *fieldPlan
 	return nil
 }
 
-func completePlannedThunkValueCatchingError(eCtx *executionContext, returnType Type, fp *fieldPlan, info ResolveInfo, path *ResponsePath, result interface{}) (completed interface{}) {
+func completePlannedThunkValueCatchingError(eCtx *executionContext, returnType Type, fp *fieldPlan, info *ResolveInfo, path *ResponsePath, result interface{}) (completed interface{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			handleFieldError(r, FieldASTsToNodeASTs(fp.fieldASTs), path, returnType, eCtx)
@@ -903,7 +903,7 @@ func completePlannedThunkValueCatchingError(eCtx *executionContext, returnType T
 	return completePlannedValue(eCtx, returnType, fp, info, path, result)
 }
 
-func completePlannedListValue(eCtx *executionContext, returnType *List, fp *fieldPlan, info ResolveInfo, path *ResponsePath, result interface{}) interface{} {
+func completePlannedListValue(eCtx *executionContext, returnType *List, fp *fieldPlan, info *ResolveInfo, path *ResponsePath, result interface{}) interface{} {
 	resultVal := reflect.ValueOf(result)
 	if resultVal.Kind() == reflect.Ptr {
 		resultVal = resultVal.Elem()
@@ -935,9 +935,9 @@ func completePlannedListValue(eCtx *executionContext, returnType *List, fp *fiel
 	return completedResults
 }
 
-func completePlannedObjectValue(eCtx *executionContext, returnType *Object, fp *fieldPlan, info ResolveInfo, path *ResponsePath, result interface{}) interface{} {
+func completePlannedObjectValue(eCtx *executionContext, returnType *Object, fp *fieldPlan, info *ResolveInfo, path *ResponsePath, result interface{}) interface{} {
 	if returnType.IsTypeOf != nil {
-		p := IsTypeOfParams{Value: result, Info: info, Context: eCtx.Context}
+		p := IsTypeOfParams{Value: result, Info: *info, Context: eCtx.Context}
 		if !returnType.IsTypeOf(p) {
 			panic(gqlerrors.NewFormattedError(
 				fmt.Sprintf(`Expected value of type "%v" but got: %T.`, returnType, result),
@@ -953,9 +953,9 @@ func completePlannedObjectValue(eCtx *executionContext, returnType *Object, fp *
 	return map[string]interface{}{}
 }
 
-func completePlannedAbstractValue(eCtx *executionContext, returnType Abstract, fp *fieldPlan, info ResolveInfo, path *ResponsePath, result interface{}) interface{} {
+func completePlannedAbstractValue(eCtx *executionContext, returnType Abstract, fp *fieldPlan, info *ResolveInfo, path *ResponsePath, result interface{}) interface{} {
 	var runtimeType *Object
-	rtParams := ResolveTypeParams{Value: result, Info: info, Context: eCtx.Context}
+	rtParams := ResolveTypeParams{Value: result, Info: *info, Context: eCtx.Context}
 	if u, ok := returnType.(*Union); ok && u.ResolveType != nil {
 		runtimeType = u.ResolveType(rtParams)
 	} else if i, ok := returnType.(*Interface); ok && i.ResolveType != nil {
