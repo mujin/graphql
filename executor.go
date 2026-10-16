@@ -161,6 +161,10 @@ type executionContext struct {
 	// runtime path threads them through parameters instead.
 	planResultPool  ResultPool
 	planFinalResult *Result
+
+	// hasPlannedThunks is set when the planned execution walk defers a field as a thunk. Without one
+	// the assembled result holds no thunks, so the dethunk walk over it can be skipped.
+	hasPlannedThunks bool
 }
 
 // Identifies one sub-field collection within a single execution.

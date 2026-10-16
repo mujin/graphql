@@ -653,10 +653,14 @@ func ExecutePlanWithPool(plan *Plan, p ExecuteParams, resultPool ResultPool) (re
 		// dethunked depth-first; queries run all then dethunk
 		// breadth-first. The traversal here just runs the appropriate
 		// dethunker on the assembled map.
-		if plan.isMutation {
-			dethunkMapDepthFirst(data)
-		} else {
-			dethunkMapWithBreadthFirstTraversal(data)
+		// Without a deferred field the map holds no thunks, so the
+		// walk over the whole result is skipped.
+		if eCtx.hasPlannedThunks {
+			if plan.isMutation {
+				dethunkMapDepthFirst(data)
+			} else {
+				dethunkMapWithBreadthFirstTraversal(data)
+			}
 		}
 		out.Data = data
 		out.Errors = append(out.Errors, eCtx.Errors...)
@@ -831,6 +835,7 @@ func startFieldExtensions(eCtx *executionContext, info ResolveInfo) (ResolveInfo
 //
 //go:noinline
 func makePlannedThunk(eCtx *executionContext, returnType Type, fp *fieldPlan, info ResolveInfo, path *ResponsePath, result interface{}) func() interface{} {
+	eCtx.hasPlannedThunks = true
 	return func() interface{} {
 		return completePlannedThunkValueCatchingError(eCtx, returnType, fp, &info, path, result)
 	}
